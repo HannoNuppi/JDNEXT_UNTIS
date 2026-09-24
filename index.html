@@ -225,13 +225,23 @@ const CONFIG = {
   // 2) Im Projekt links "Build" → "Firestore Database" → "Datenbank erstellen" (production mode)
   // 3) Zahnrad oben links → "Projekteinstellungen" → runterscrollen zu "Meine Apps" → </> (Web-App) → registrieren
   // 4) Das dort angezeigte firebaseConfig-Objekt hier eintragen:
-  firebase: {
-    apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
-    authDomain: "next-untis-plus.firebaseapp.com",
-    projectId: "next-untis-plus",
-    storageBucket: "next-untis-plus.firebasestorage.app",
-    messagingSenderId: "276114359651",
-    appId: "1:276114359651:web:c357fa4cc4f395bf55bf56",
+  const firebaseConfig = {
+  apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
+
+  authDomain: "next-untis-plus.firebaseapp.com",
+
+  databaseURL: "https://next-untis-plus-default-rtdb.europe-west1.firebasedatabase.app",
+
+  projectId: "next-untis-plus",
+
+  storageBucket: "next-untis-plus.firebasestorage.app",
+
+  messagingSenderId: "276114359651",
+
+  appId: "1:276114359651:web:c357fa4cc4f395bf55bf56",
+
+  measurementId: "G-VD8CKYNT8C"
+
   },
 };
 /* ===================================================================== */
