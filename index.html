@@ -6,6 +6,8 @@
 <title>Stundenplan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --bg-a:#0a0c2a; --bg-b:#171154; --bg-c:#2a1264;
@@ -193,12 +195,12 @@ const CONFIG = {
   startOfCycleA: "2026-09-21", // ein Montag einer "A"-Woche; Rhythmus wechselt automatisch
 
   periods: [
-    { label: "1.", time: "08:00–08:45" },
-    { label: "2.", time: "08:50–09:35" },
-    { label: "3.", time: "09:55–10:40" },
-    { label: "4.", time: "10:45–11:30" },
-    { label: "5.", time: "11:50–12:35" },
-    { label: "6.", time: "12:40–13:25" },
+    { label: "1.", time: "07:50–08:50" },
+    { label: "2.", time: "08:55–09:55" },
+    { label: "3.", time: "10:15–11:15" },
+    { label: "4.", time: "11:20–12:20" },
+    { label: "5.", time: "13:00–14:00" },
+    { label: "6.", time: "14:05–15:05" },
   ],
 
   schedule: {
@@ -218,17 +220,30 @@ const CONFIG = {
     },
   },
 
-  // Für ECHT geteilte Hausaufgaben (alle sehen dieselben Einträge):
-  // 1) Kostenlosen Account auf https://jsonbin.io anlegen
-  // 2) Neuen Bin erstellen, z.B. mit Inhalt {"homework":{}}
-  // 3) Bin-ID und den "X-Master-Key" hier eintragen
-  jsonbin: { binId: "6ab42c96ac6210605aee4351", apiKey: "$2a$10$S/Ar9odBNRW14rsV52XHkuQyYfXNgNxyEbmUGljY0/X34YMI6TMxi" },
+  // Für ECHT geteilte Hausaufgaben (alle sehen dieselben Einträge), per Firebase Firestore:
+  // 1) Kostenloses Google-Konto → https://console.firebase.google.com → "Projekt hinzufügen"
+  // 2) Im Projekt links "Build" → "Firestore Database" → "Datenbank erstellen" (production mode)
+  // 3) Zahnrad oben links → "Projekteinstellungen" → runterscrollen zu "Meine Apps" → </> (Web-App) → registrieren
+  // 4) Das dort angezeigte firebaseConfig-Objekt hier eintragen:
+  firebase: {
+    apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
+    authDomain: "next-untis-plus.firebaseapp.com",
+    projectId: "next-untis-plus",
+    storageBucket: "next-untis-plus.firebasestorage.app",
+    messagingSenderId: "276114359651",
+    appId: "1:276114359651:web:c357fa4cc4f395bf55bf56",
+  },
 };
 /* ===================================================================== */
 
 const DAY_NAMES = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"];
 const DAY_SHORT = ["Mo","Di","Mi","Do","Fr"];
-const SHARED_MODE = CONFIG.jsonbin.binId !== "DEINE_BIN_ID" && CONFIG.jsonbin.apiKey !== "DEIN_API_KEY";
+const SHARED_MODE = CONFIG.firebase.apiKey !== "DEIN_API_KEY" && CONFIG.firebase.projectId !== "DEIN_PROJEKT";
+let db = null;
+if(SHARED_MODE){
+  firebase.initializeApp(CONFIG.firebase);
+  db = firebase.firestore();
+}
 const LOCAL_KEY = "stundenplan_homework_local";
 // kleine Liste offensichtlicher Platzhalter/Spam-Wörter, keine Schimpfwortliste
 const JUNK_WORDS = ["asdf","asdfasdf","test123","lorem ipsum","quatsch","xxxxx","keine ahnung lol","idk"];
@@ -264,7 +279,7 @@ function isNonsense(text){
   return false;
 }
 
-/* ---- Datenspeicher: jsonbin.io, sonst lokal im Browser ---- */
+/* ---- Datenspeicher: Firebase Firestore, sonst lokal im Browser ---- */
 async function loadHomework(){
   if(!SHARED_MODE){
     try{ homeworkData = JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}"); }catch(e){ homeworkData = {}; }
@@ -273,26 +288,22 @@ async function loadHomework(){
   }
   setSync("Verbinde…");
   try{
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.jsonbin.binId}/latest`, { headers:{ "X-Master-Key": CONFIG.jsonbin.apiKey } });
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    const data = await res.json();
-    homeworkData = (data.record && data.record.homework) || {};
-    setSync("Synchronisiert · für alle sichtbar");
+    const snap = await db.collection("homework").get();
+    homeworkData = {};
+    snap.forEach(doc => { homeworkData[doc.id] = (doc.data().entries) || []; });
+    setSync("Synchronisiert · für alle sichtbar (Firebase)");
   }catch(e){
     console.error(e); homeworkData = {};
-    setSync("⚠️ Verbindung fehlgeschlagen — Einrichtung prüfen");
+    setSync("⚠️ Verbindung fehlgeschlagen — Firebase-Einrichtung prüfen");
   }
 }
-async function saveHomework(){
+async function saveHomework(hwKey){
   if(!SHARED_MODE){ localStorage.setItem(LOCAL_KEY, JSON.stringify(homeworkData)); return true; }
   setSync("Speichert…");
   try{
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.jsonbin.binId}`, {
-      method:"PUT", headers:{ "Content-Type":"application/json", "X-Master-Key": CONFIG.jsonbin.apiKey },
-      body: JSON.stringify({ homework: homeworkData })
-    });
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    setSync("Synchronisiert · für alle sichtbar"); return true;
+    await db.collection("homework").doc(hwKey).set({ entries: homeworkData[hwKey] || [] });
+    setSync("Synchronisiert · für alle sichtbar (Firebase)");
+    return true;
   }catch(e){ console.error(e); setSync("⚠️ Speichern fehlgeschlagen — bitte erneut versuchen"); return false; }
 }
 function setSync(msg){ document.getElementById("syncBar").textContent = msg; }
@@ -302,8 +313,8 @@ function renderSetupBanner(){
   if(SHARED_MODE || localStorage.getItem("hideSetupBanner")){ el.innerHTML=""; return; }
   el.innerHTML = `<div class="setupbanner">
     <b>Hinweis:</b> Hausaufgaben sind aktuell nur lokal in deinem Browser gespeichert.
-    Damit alle dieselben Hausaufgaben sehen, trage bei <b>CONFIG.jsonbin</b> im Code
-    eine kostenlose <b>jsonbin.io</b> Bin-ID und API-Key ein.
+    Damit alle dieselben Hausaufgaben sehen, trage bei <b>CONFIG.firebase</b> im Code
+    dein kostenloses <b>Firebase</b>-Projekt ein.
     <button id="hideBanner">Ausblenden</button>
   </div>`;
   document.getElementById("hideBanner").onclick = ()=>{ localStorage.setItem("hideSetupBanner","1"); renderSetupBanner(); };
@@ -402,7 +413,7 @@ function openModal(date, pIdx, subject){
       saveBtn.disabled = true; saveBtn.textContent = "Speichert…";
       if(!homeworkData[hwKey]) homeworkData[hwKey] = [];
       homeworkData[hwKey].push({ id:genId(), text, author:authorEl.value.trim(), ts:Date.now(), reports:0 });
-      const ok = await saveHomework();
+      const ok = await saveHomework(hwKey);
       saveBtn.disabled = false; saveBtn.textContent = "Speichern";
       if(ok){ draw(); renderTimetable(); }
     };
@@ -431,13 +442,13 @@ async function reportEntry(hwKey, id, redraw){
   markReported(id);
   if(entry.reports >= REPORT_THRESHOLD){
     homeworkData[hwKey] = list.filter(e=>e.id!==id);
-    await saveHomework();
+    await saveHomework(hwKey);
     showToast("🚩 Eintrag wurde mehrfach gemeldet und entfernt");
     renderTimetable();
     closeModal();
     return;
   }
-  await saveHomework();
+  await saveHomework(hwKey);
   showToast("Danke fürs Melden!");
   redraw();
   renderTimetable();
