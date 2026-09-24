@@ -165,7 +165,10 @@
       <div class="logo-tag">Dein Schuljahr</div>
       <div class="logo-main"><span class="l1">STUNDEN</span><span class="l2">PLAN</span></div>
     </div>
-    <button class="loginbtn" id="loginBtn">Login</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
+      <button class="loginbtn" id="loginBtn">Login</button>
+    </div>
   </div>
 
   <div id="setupBanner"></div>
@@ -546,6 +549,44 @@ function showToast(msg){
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
 document.getElementById("loginBtn").onclick = ()=> showToast("🔒 Login — Coming Soon");
+
+// ---- PWA / App-Installation ----
+let deferredInstallPrompt = null;
+
+window.addEventListener("beforeinstallprompt", event=>{
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  const btn = document.getElementById("installBtn");
+  if(btn) btn.style.display = "inline-block";
+});
+
+window.addEventListener("appinstalled", ()=>{
+  deferredInstallPrompt = null;
+  const btn = document.getElementById("installBtn");
+  if(btn) btn.style.display = "none";
+  showToast("✅ Stundenplan wurde installiert");
+});
+
+document.getElementById("installBtn").onclick = async ()=>{
+  if(!deferredInstallPrompt){
+    showToast("📱 Browsermenü → „App installieren“");
+    return;
+  }
+  deferredInstallPrompt.prompt();
+  try { await deferredInstallPrompt.userChoice; }
+  catch(e) { console.warn("Installation:", e); }
+  deferredInstallPrompt = null;
+  document.getElementById("installBtn").style.display = "none";
+};
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("./sw.js", {scope:"./"})
+      .then(()=>console.log("PWA Service Worker aktiv"))
+      .catch(err=>console.warn("Service Worker:", err));
+  });
+}
+
 
 document.getElementById("prevWeek").onclick = ()=>{ selectedMonday = addDays(selectedMonday,-7); renderAll(); };
 document.getElementById("nextWeek").onclick = ()=>{ selectedMonday = addDays(selectedMonday,7); renderAll(); };
