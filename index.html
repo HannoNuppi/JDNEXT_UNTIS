@@ -219,40 +219,39 @@ const CONFIG = {
       Freitag:    ["Wahlpflicht", "Englisch",    "Chemie", "Politik",  "",          ""],
     },
   },
-
-  // Für ECHT geteilte Hausaufgaben (alle sehen dieselben Einträge), per Firebase Firestore:
-  // 1) Kostenloses Google-Konto → https://console.firebase.google.com → "Projekt hinzufügen"
-  // 2) Im Projekt links "Build" → "Firestore Database" → "Datenbank erstellen" (production mode)
-  // 3) Zahnrad oben links → "Projekteinstellungen" → runterscrollen zu "Meine Apps" → </> (Web-App) → registrieren
-  // 4) Das dort angezeigte firebaseConfig-Objekt hier eintragen:
-  const firebaseConfig = {
-  apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
-
-  authDomain: "next-untis-plus.firebaseapp.com",
-
-  databaseURL: "https://next-untis-plus-default-rtdb.europe-west1.firebasedatabase.app",
-
-  projectId: "next-untis-plus",
-
-  storageBucket: "next-untis-plus.firebasestorage.app",
-
-  messagingSenderId: "276114359651",
-
-  appId: "1:276114359651:web:c357fa4cc4f395bf55bf56",
-
-  measurementId: "G-VD8CKYNT8C"
-
-  },
+  // Gemeinsame Hausaufgaben über Firebase Firestore
+  firebase: {
+    apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
+    authDomain: "next-untis-plus.firebaseapp.com",
+    databaseURL: "https://next-untis-plus-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "next-untis-plus",
+    storageBucket: "next-untis-plus.firebasestorage.app",
+    messagingSenderId: "276114359651",
+    appId: "1:276114359651:web:c357fa4cc4f395bf55bf56",
+    measurementId: "G-VD8CKYNT8C"
+  }
 };
 /* ===================================================================== */
 
 const DAY_NAMES = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"];
 const DAY_SHORT = ["Mo","Di","Mi","Do","Fr"];
-const SHARED_MODE = CONFIG.firebase.apiKey !== "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg" && CONFIG.firebase.projectId !== "next-untis-plus";
+const SHARED_MODE = !!(
+  CONFIG.firebase &&
+  CONFIG.firebase.apiKey &&
+  CONFIG.firebase.projectId
+);
+
 let db = null;
+let homeworkUnsubscribe = null;
+
 if(SHARED_MODE){
-  firebase.initializeApp(CONFIG.firebase);
-  db = firebase.firestore();
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(CONFIG.firebase);
+    db = firebase.firestore();
+  }catch(e){
+    console.error("Firebase konnte nicht initialisiert werden:", e);
+    db = null;
+  }
 }
 const LOCAL_KEY = "stundenplan_homework_local";
 // kleine Liste offensichtlicher Platzhalter/Spam-Wörter, keine Schimpfwortliste
@@ -291,43 +290,100 @@ function isNonsense(text){
 
 /* ---- Datenspeicher: Firebase Firestore, sonst lokal im Browser ---- */
 async function loadHomework(){
-  if(!SHARED_MODE){
-    try{ homeworkData = JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}"); }catch(e){ homeworkData = {}; }
-    setSync("Nur lokal gespeichert (nur du siehst das)");
+  if(!SHARED_MODE || !db){
+    try{
+      homeworkData = JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}");
+    }catch(e){
+      homeworkData = {};
+    }
+    setSync("⚠️ Firebase nicht verfügbar — nur lokal gespeichert");
     return;
   }
-  setSync("Verbinde…");
-  try{
-    const snap = await db.collection("homework").get();
-    homeworkData = {};
-    snap.forEach(doc => { homeworkData[doc.id] = (doc.data().entries) || []; });
-    setSync("Synchronisiert · für alle sichtbar (Firebase)");
-  }catch(e){
-    console.error(e); homeworkData = {};
-    setSync("⚠️ Verbindung fehlgeschlagen — Firebase-Einrichtung prüfen");
+
+  setSync("Verbinde mit Firebase…");
+
+  if(homeworkUnsubscribe){
+    homeworkUnsubscribe();
+    homeworkUnsubscribe = null;
   }
+
+  return new Promise(resolve=>{
+    let firstSnapshot = true;
+
+    homeworkUnsubscribe = db.collection("homework").onSnapshot(
+      snap=>{
+        homeworkData = {};
+        snap.forEach(doc=>{
+          const entries = Array.isArray(doc.data().entries) ? doc.data().entries : [];
+          homeworkData[doc.id] = entries;
+        });
+
+        setSync("● Live synchronisiert · für alle sichtbar (Firebase)");
+        renderTimetable();
+
+        if(firstSnapshot){
+          firstSnapshot = false;
+          resolve();
+        }
+      },
+      err=>{
+        console.error("Firestore-Lesefehler:", err);
+        homeworkData = {};
+        setSync("⚠️ Firestore-Zugriff verweigert — Firebase-Regeln prüfen");
+        firstSnapshot = false;
+        resolve();
+      }
+    );
+  });
 }
 async function saveHomework(hwKey){
-  if(!SHARED_MODE){ localStorage.setItem(LOCAL_KEY, JSON.stringify(homeworkData)); return true; }
+  if(!SHARED_MODE || !db){
+    try{
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(homeworkData));
+      setSync("Nur lokal gespeichert (Firebase nicht verfügbar)");
+      return true;
+    }catch(e){
+      console.error("Lokales Speichern fehlgeschlagen:", e);
+      return false;
+    }
+  }
+
   setSync("Speichert…");
+
   try{
-    await db.collection("homework").doc(hwKey).set({ entries: homeworkData[hwKey] || [] });
-    setSync("Synchronisiert · für alle sichtbar (Firebase)");
+    await db.collection("homework").doc(hwKey).set({
+      entries: homeworkData[hwKey] || [],
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, {merge:true});
+
+    setSync("● Gespeichert · live für alle sichtbar");
     return true;
-  }catch(e){ console.error(e); setSync("⚠️ Speichern fehlgeschlagen — bitte erneut versuchen"); return false; }
+  }catch(e){
+    console.error("Firestore-Speicherfehler:", e);
+    setSync("⚠️ Speichern fehlgeschlagen — Firestore-Regeln prüfen");
+    return false;
+  }
 }
 function setSync(msg){ document.getElementById("syncBar").textContent = msg; }
 
 function renderSetupBanner(){
   const el = document.getElementById("setupBanner");
-  if(SHARED_MODE || localStorage.getItem("hideSetupBanner")){ el.innerHTML=""; return; }
+  if(SHARED_MODE){
+    el.innerHTML = "";
+    return;
+  }
+  if(localStorage.getItem("hideSetupBanner")){
+    el.innerHTML = "";
+    return;
+  }
   el.innerHTML = `<div class="setupbanner">
-    <b>Hinweis:</b> Hausaufgaben sind aktuell nur lokal in deinem Browser gespeichert.
-    Damit alle dieselben Hausaufgaben sehen, trage bei <b>CONFIG.firebase</b> im Code
-    dein kostenloses <b>Firebase</b>-Projekt ein.
+    <b>Hinweis:</b> Firebase ist nicht konfiguriert. Hausaufgaben werden nur lokal in diesem Browser gespeichert.
     <button id="hideBanner">Ausblenden</button>
   </div>`;
-  document.getElementById("hideBanner").onclick = ()=>{ localStorage.setItem("hideSetupBanner","1"); renderSetupBanner(); };
+  document.getElementById("hideBanner").onclick = ()=>{
+    localStorage.setItem("hideSetupBanner","1");
+    renderSetupBanner();
+  };
 }
 
 function renderWeekNav(){
@@ -458,10 +514,23 @@ async function reportEntry(hwKey, id, redraw){
     closeModal();
     return;
   }
-  await saveHomework(hwKey);
-  showToast("Danke fürs Melden!");
-  redraw();
-  renderTimetable();
+  const ok = await saveHomework(hwKey);
+  if(ok){
+    showToast("Danke fürs Melden!");
+    redraw();
+    renderTimetable();
+  }else{
+    // Optimistische Änderung zurücknehmen, falls Firebase nicht speichern konnte.
+    entry.reports = Math.max(0, (entry.reports||1) - 1);
+    try{
+      const list = JSON.parse(localStorage.getItem("reportedHw")||"[]");
+      const pos = list.indexOf(id);
+      if(pos >= 0) list.splice(pos, 1);
+      localStorage.setItem("reportedHw", JSON.stringify(list));
+    }catch(e){}
+    showToast("⚠️ Meldung konnte nicht gespeichert werden");
+    redraw();
+  }
 }
 
 function closeModal(){ document.getElementById("overlay").classList.remove("show"); }
