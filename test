@@ -1,24 +1,28 @@
 # In der VM als Administrator ausführen!
 
-Write-Host "=== Repariere Tuxler VPN in der VM ===" -ForegroundColor Cyan
+Write-Host "=== TUXLER CACHE & SERVICE RESET ===" -ForegroundColor Cyan
 
-# 1. Laufende Tuxler-Prozesse beenden
-Write-Host "[1/4] Beende blockierte Tuxler-Prozesse..." -ForegroundColor Yellow
-Get-Process -Name "*tuxler*" -ErrorAction SilentlyContinue | Stop-Process -Force
+# 1. Blockierte Prozesse & Dienst stoppen
+Stop-Process -Name "*tuxler*" -Force -ErrorAction SilentlyContinue
+Stop-Service -Name "TuxlerService" -ErrorAction SilentlyContinue
 
-# 2. Visual C++ und WebView2 Runtime nachinstallieren (wichtig für die Grafikanzeige!)
-Write-Host "[2/4] Installiere fehlende Oberflächen-Bibliotheken (VC++ & WebView2)..." -ForegroundColor Yellow
-winget install --id Microsoft.VCRedist.2015+.x64 -e --silent --accept-package-agreements --accept-source-agreements
-winget install --id Microsoft.EdgeWebView2Runtime -e --silent --accept-package-agreements --accept-source-agreements
+# 2. Defekten Sitzungs-Cache löschen (Löst die "Lost Connection"-Schleife)
+$appData = "$env:APPDATA\Tuxler"
+$localAppData = "$env:LOCALAPPDATA\Tuxler"
 
-# 3. Firewall-Regeln für Tuxler erstellen
-Write-Host "[3/4] Schalte Tuxler in der Windows-Firewall frei..." -ForegroundColor Yellow
-New-NetFirewallRule -DisplayName "Tuxler App" -Direction Inbound -Action Allow -Program "$env:ProgramFiles\Tuxler\tuxler.exe" -ErrorAction SilentlyContinue
-New-NetFirewallRule -DisplayName "Tuxler Service" -Direction Inbound -Action Allow -Program "$env:ProgramFiles\Tuxler\tuxlerservice.exe" -ErrorAction SilentlyContinue
+if (Test-Path $appData) { 
+    Remove-Item -Path $appData -Recurse -Force -ErrorAction SilentlyContinue 
+}
+if (Test-Path $localAppData) { 
+    Remove-Item -Path $localAppData -Recurse -Force -ErrorAction SilentlyContinue 
+}
 
-# 4. Tuxler Dienst neu starten
-Write-Host "[4/4] Starte Tuxler-Hintergrunddienst neu..." -ForegroundColor Yellow
-Restart-Service -Name "TuxlerService" -ErrorAction SilentlyContinue
+# 3. Netzwerkverbindungen & DNS leeren
+netsh winsock reset | Out-Null
+ipconfig /flushdns | Out-Null
+
+# 4. Tuxler-Dienst neu starten
+Set-Service -Name "TuxlerService" -StartupType Automatic -ErrorAction SilentlyContinue
 Start-Service -Name "TuxlerService" -ErrorAction SilentlyContinue
 
-Write-Host "`nReparatur abgeschlossen! Starte Tuxler jetzt neu." -ForegroundColor Green
+Write-Host "`nReset erfolgreich! Starte Tuxler jetzt neu." -ForegroundColor Green
