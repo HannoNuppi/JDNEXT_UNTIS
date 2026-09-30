@@ -1,29 +1,19 @@
 # In der VM als Administrator ausführen!
 
-Write-Host "=== SCHRITT 1: SURFSHARK-RESTESÄUBERUNG & NETZWERK-RESET ===" -ForegroundColor Cyan
+Write-Host "=== TUXLER NACH INTERNETAUSFALL REPARIEREN ===" -ForegroundColor Cyan
 
-# 1. Windows Proxy-Einstellungen komplett zurücksetzen
-netsh winhttp reset proxy
-Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -Name ProxyEnable -Value 0 -ErrorAction SilentlyContinue
-
-# 2. DNS-Einstellungen aller Netzwerkadapter auf Automatisch (DHCP) zurücksetzen
-Get-NetAdapter | Where-Object Status -eq "Up" | Set-DnsClientServerAddress -ResetServerAddresses -ErrorAction SilentlyContinue
-
-# 3. Winsock, IP-Stack und DNS-Cache leeren
-netsh winsock reset | Out-Null
-netsh int ip reset | Out-Null
-ipconfig /flushdns | Out-Null
-
-Write-Host "`n=== SCHRITT 2: TUXLER-DIENST REPARIEREN ===" -ForegroundColor Cyan
-
-# 4. Blockierte Tuxler-Hintergrundprozesse beenden
+# 1. Hängende Tuxler-Prozesse beenden
 Stop-Process -Name "*tuxler*" -Force -ErrorAction SilentlyContinue
 
-# 5. Tuxler-Dienst auf 'Automatisch' stellen und neu starten (wichtig für die Erweiterung!)
-Set-Service -Name "TuxlerService" -StartupType Automatic -ErrorAction SilentlyContinue
+# 2. Defekte Sitzungsdateien aus dem Ausfall löschen
+Remove-Item -Path "$env:APPDATA\Tuxler" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:LOCALAPPDATA\Tuxler" -Recurse -Force -ErrorAction SilentlyContinue
+
+# 3. DNS-Cache nach dem Ausfall leeren
+ipconfig /flushdns | Out-Null
+
+# 4. Tuxler-Hintergrunddienst neu starten
 Restart-Service -Name "TuxlerService" -ErrorAction SilentlyContinue
 Start-Service -Name "TuxlerService" -ErrorAction SilentlyContinue
 
-Write-Host "`n==========================================" -ForegroundColor Green
-Write-Host " SÄUBERUNG ABGESCHLOSSEN! Bitte VM neu starten. " -ForegroundColor Green
-Write-Host "==========================================" -ForegroundColor Green
+Write-Host "`nBereinigung abgeschlossen!" -ForegroundColor Green
