@@ -1,0 +1,24 @@
+# In der VM als Administrator ausführen!
+
+Write-Host "=== Repariere Tuxler VPN in der VM ===" -ForegroundColor Cyan
+
+# 1. Laufende Tuxler-Prozesse beenden
+Write-Host "[1/4] Beende blockierte Tuxler-Prozesse..." -ForegroundColor Yellow
+Get-Process -Name "*tuxler*" -ErrorAction SilentlyContinue | Stop-Process -Force
+
+# 2. Visual C++ und WebView2 Runtime nachinstallieren (wichtig für die Grafikanzeige!)
+Write-Host "[2/4] Installiere fehlende Oberflächen-Bibliotheken (VC++ & WebView2)..." -ForegroundColor Yellow
+winget install --id Microsoft.VCRedist.2015+.x64 -e --silent --accept-package-agreements --accept-source-agreements
+winget install --id Microsoft.EdgeWebView2Runtime -e --silent --accept-package-agreements --accept-source-agreements
+
+# 3. Firewall-Regeln für Tuxler erstellen
+Write-Host "[3/4] Schalte Tuxler in der Windows-Firewall frei..." -ForegroundColor Yellow
+New-NetFirewallRule -DisplayName "Tuxler App" -Direction Inbound -Action Allow -Program "$env:ProgramFiles\Tuxler\tuxler.exe" -ErrorAction SilentlyContinue
+New-NetFirewallRule -DisplayName "Tuxler Service" -Direction Inbound -Action Allow -Program "$env:ProgramFiles\Tuxler\tuxlerservice.exe" -ErrorAction SilentlyContinue
+
+# 4. Tuxler Dienst neu starten
+Write-Host "[4/4] Starte Tuxler-Hintergrunddienst neu..." -ForegroundColor Yellow
+Restart-Service -Name "TuxlerService" -ErrorAction SilentlyContinue
+Start-Service -Name "TuxlerService" -ErrorAction SilentlyContinue
+
+Write-Host "`nReparatur abgeschlossen! Starte Tuxler jetzt neu." -ForegroundColor Green
