@@ -1,0 +1,89 @@
+<#
+====================================================================
+ SKRIPT 2: IN-VM AUTOMATISIERUNG & DOPPEL-VPN SETUP (UPDATED)
+====================================================================
+#>
+
+# 1. Administrator-Rechte automatisch anfordern
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "Fordere Administrator-Rechte an..." -ForegroundColor Yellow
+    Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
+}
+
+$ErrorActionPreference = "Continue"
+
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host " STARTE VM HARDENING & DOPPEL-VPN SETUP " -ForegroundColor Cyan
+Write-Host "==========================================" -ForegroundColor Cyan
+
+# 2. NETZWERK-HÄRTUNG & DISCOVERY DEAKTIVIEREN
+Write-Host "`n[1/5] Härte Netzwerkeinstellungen in der VM..." -ForegroundColor Yellow
+try {
+    Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Public -ErrorAction SilentlyContinue
+    Set-NetFirewallRule -DisplayGroup "Datei- und Druckerfreigabe" -Enabled False -ErrorAction SilentlyContinue
+    Set-NetFirewallRule -DisplayGroup "Netzwerkdiscovery" -Enabled False -ErrorAction SilentlyContinue
+    Set-NetFirewallRule -DisplayGroup "File and Printer Sharing" -Enabled False -ErrorAction SilentlyContinue
+    Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+    Write-Host " -> Netzwerkkategorie auf 'Öffentlich' gesetzt & Freigaben blockiert." -ForegroundColor Green
+} catch {
+    Write-Warning "Einige Firewall-Regeln konnten nicht angepasst werden."
+}
+
+# 3. DNS-LEAK SCHUTZ (Erzwinge Cloudflare 1.1.1.1 & Quad9 9.9.9.9)
+Write-Host "`n[2/5] Konfiguriere sichere DNS-Server (Schutz vor DNS-Leaks)..." -ForegroundColor Yellow
+try {
+    $Adapters = Get-NetAdapter | Where-Object Status -eq "Up"
+    foreach ($Adapter in $Adapters) {
+        Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -ServerAddresses ("1.1.1.1", "9.9.9.9") -ErrorAction SilentlyContinue
+    }
+    Write-Host " -> Cloudflare (1.1.1.1) und Quad9 (9.9.9.9) DNS erfolgreich gesetzt." -ForegroundColor Green
+} catch {
+    Write-Warning "DNS-Server konnten nicht automatisch zugewiesen werden."
+}
+
+# 4. WINGET SOFTWARE INSTALLATION (Firefox & Surfshark)
+Write-Host "`n[3/5] Aktualisiere Winget und installiere Basis-Software..." -ForegroundColor Yellow
+winget source update | Out-Null
+
+Write-Host " -> Installiere Mozilla Firefox..." -ForegroundColor Gray
+winget install --id Mozilla.Firefox -e --silent --accept-package-agreements --accept-source-agreements
+
+Write-Host " -> Installiere Surfshark VPN..." -ForegroundColor Gray
+winget install --id Surfshark.Surfshark -e --silent --accept-package-agreements --accept-source-agreements
+
+# 5. TUXLER VPN HERUNTERLADEN UND INSTALLIEREN
+Write-Host "`n[4/5] Lade Tuxler VPN herunter..." -ForegroundColor Yellow
+$tuxlerInstaller = "$env:TEMP\TuxlerSetup.exe"
+$tuxlerUrl = "https://www.tuxler.com/files/tuxler-setup.exe"
+
+# TLS 1.2 erzwingen & User-Agent mitsenden
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$WebClient = New-Object System.Net.WebClient
+$WebClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+
+try {
+    $WebClient.DownloadFile($tuxlerUrl, $tuxlerInstaller)
+    Write-Host " -> Installiere Tuxler VPN..." -ForegroundColor Gray
+    Start-Process -FilePath $tuxlerInstaller -ArgumentList "/S" -Wait
+    Write-Host " -> Tuxler VPN erfolgreich installiert!" -ForegroundColor Green
+} catch {
+    Write-Warning "Automatischer Download von Tuxler fehlgeschlagen. Lade Tuxler manuell über Firefox von https://www.tuxler.com herunter."
+}
+
+# 6. WINDOWS TELEMETRIE REDUZIEREN
+Write-Host "`n[5/5] Deaktiviere Hintergrund-Telemetrie..." -ForegroundColor Yellow
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -Name "AllowTelemetry" -Type DWord -Value 0 -ErrorAction SilentlyContinue
+Stop-Service "DiagTrack" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+Set-Service "DiagTrack" -StartupType Disabled -ErrorAction SilentlyContinue
+
+Write-Host "`n==========================================" -ForegroundColor Green
+Write-Host " ALLE SCHRITTE ERFOLGREICH ABGESCHLOSSEN! " -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
+Write-Host "Nächste Schritte:" -ForegroundColor Yellow
+Write-Host "1. Surfshark in der VM öffnen, anmelden und Kill-Switch aktivieren." -ForegroundColor White
+Write-Host "2. Tuxler VPN starten." -ForegroundColor White
+Write-Host "3. Im Firefox auf 'dnsleaktest.com' die Verbindung testen." -ForegroundColor White
+Write-Host "=========================================="
+
+Read-Host "`nDrücke ENTER, um dieses Fenster zu schließen"
