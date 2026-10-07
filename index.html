@@ -668,8 +668,8 @@ function markReported(id){
 
 async function reportEntry(hwKey,id,redraw){
   if(wasReported(id)) return;
-  if(!sharedReady || !db || !currentUser){
-    showToast("⚠️ Meldungen benötigen eine sichere Verbindung");
+  if(!db){
+    showToast("⚠️ Firebase ist momentan nicht verfügbar");
     return;
   }
 
@@ -677,10 +677,15 @@ async function reportEntry(hwKey,id,redraw){
   if(!entry || entry.legacy) return;
 
   try{
-    await setDoc(
-      db.doc("homework/"+hwKey+"/entries/"+id+"/reports/"+currentUser.uid),
-      {createdAt:firebase.firestore.FieldValue.serverTimestamp()}
-    );
+    const user = await ensureAnonymousAuth();
+    if(!user){
+      showToast("⚠️ Meldungen sind momentan nicht verfügbar");
+      return;
+    }
+
+    await db.doc("homework/"+hwKey+"/entries/"+id+"/reports/"+user.uid).set({
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
     markReported(id);
     showToast("🚩 Meldung gespeichert");
     redraw();
@@ -751,28 +756,11 @@ if("serviceWorker" in navigator){
 }
 
 
-document.getElementById("prevWeek").onclick = ()=>{ selectedMonday = addDays(selectedMonday,-7); renderAll(); };
-document.getElementById("nextWeek").onclick = ()=>{ selectedMonday = addDays(selectedMonday,7); renderAll(); };
-document.getElementById("jumpToday").onclick = ()=>{ selectedMonday = mondayOf(new Date()); renderAll(); };
-
-function renderAll(){ renderWeekNav(); renderTimetable(); }
-
-renderSetupBanner();
-renderAll();
-
-loadLegacyHomework();
-loadHomework();
-
-oldAuth.oldAuth.onAuthStateChanged(user=>{
+oldAuth.onAuthStateChanged(user=>{
   currentUser=user;
 });
 
-document.getElementById("prevWeek").onclick=()=>{
-  selectedMonday=addDays(selectedMonday,-7);
-  loadLegacyHomework();
-  loadHomework();
-  renderAll();
-};
+
 
 document.getElementById("nextWeek").onclick=()=>{
   selectedMonday=addDays(selectedMonday,7);
