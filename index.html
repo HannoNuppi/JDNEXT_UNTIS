@@ -251,6 +251,7 @@ const DAY_NAMES = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"];
 const DAY_SHORT = ["Mo","Di","Mi","Do","Fr"];
 
 let currentUser = null;
+let selectedMonday = mondayOf(new Date());
 let homeworkUnsubscribes = [];
 let legacyHomeworkUnsubscribe = null;
 
@@ -258,6 +259,7 @@ let legacyHomeworkUnsubscribe = null;
 // wird nur anonym verwendet, damit neue Hausaufgaben einer unveränderlichen UID zugeordnet werden können.
 const LOCAL_KEY = "stundenplan_homework_local";
 let homeworkData = {};
+let sharedReady = true;
 
 function pad(n){ return n.toString().padStart(2,"0"); }
 function isoDate(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
@@ -272,6 +274,9 @@ function fmtShort(d){ return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.`; }
 function fmtLong(d){ return d.toLocaleDateString("de-DE",{day:"2-digit",month:"long",year:"numeric"}); }
 
 /* ---- Unsinn-Filter: erkennt offensichtlichen Spam/Kauderwelsch ---- */
+// kleine Liste offensichtlicher Platzhalter/Spam-Wörter, keine Schimpfwortliste
+const JUNK_WORDS = ["asdf","asdfasdf","test123","lorem ipsum","quatsch","xxxxx","keine ahnung lol","idk"];
+
 function isNonsense(text){
   const t = text.trim();
   if(t.length < 3) return true;
@@ -320,7 +325,8 @@ async function ensureAnonymousAuth(){
 }
 
 async function loadHomework(){
-  resetHomeworkListeners();
+  homeworkUnsubscribes.forEach(unsub=>{ try{unsub();}catch{} });
+  homeworkUnsubscribes=[];
   homeworkData={};
   const keys=currentWeekHomeworkKeys();
   if(!keys.length){
@@ -369,7 +375,10 @@ async function loadHomework(){
 }
 
 async function loadLegacyHomework(){
-  if(legacyHomeworkUnsubscribe) legacyHomeworkUnsubscribe();
+  if(legacyHomeworkUnsubscribe){
+    try{legacyHomeworkUnsubscribe();}catch{}
+    legacyHomeworkUnsubscribe=null;
+  }
   legacyHomeworkUnsubscribe=db.collection("homework").onSnapshot(
     snap=>{
       const visibleKeys=new Set(currentWeekHomeworkKeys());
@@ -715,6 +724,8 @@ document.getElementById("jumpToday").onclick=()=>{
 };
 
 // Der Stundenplan wird sofort gerendert; Firebase lädt Hausaufgaben parallel.
+renderSetupBanner();
+renderAll();
 loadLegacyHomework();
 loadHomework();
 </script>
