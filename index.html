@@ -6,6 +6,9 @@
 <title>Stundenplan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <style>
   :root{
@@ -189,22 +192,7 @@
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {
-  getAuth,
-  signInAnonymously,
-  onAuthStateChanged
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {
-  getFirestore,
-  collection,
-  doc,
-  onSnapshot,
-  setDoc,
-  serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
+<script>
 const OLD_FIREBASE_CONFIG = Object.freeze({
   apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
   authDomain: "next-untis-plus.firebaseapp.com",
@@ -215,9 +203,12 @@ const OLD_FIREBASE_CONFIG = Object.freeze({
   measurementId: "G-VD8CKYNT8C"
 });
 
-const oldFirebaseApp = initializeApp(OLD_FIREBASE_CONFIG, "JDNEXT_UNTIS");
-const oldAuth = getAuth(oldFirebaseApp);
-const db = getFirestore(oldFirebaseApp);
+if(!firebase.apps.length){
+  firebase.initializeApp(OLD_FIREBASE_CONFIG);
+}
+const oldFirebaseApp = firebase.app();
+const oldAuth = firebase.auth();
+const db = firebase.firestore();
 
 const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.html";
 
@@ -335,11 +326,48 @@ async function ensureAnonymousAuth(){
   }
 }
 
+async async function ensureAnonymousAuth(){
+  if(oldAuth.currentUser) return oldAuth.currentUser;
+  try{
+    const result=await oldAuth.signInAnonymously();
+    return result.user;
+  }catch(e){
+    console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
+    return null;
+  }
+}
+
+function resetHomeworkListeners(){
+  homeworkUnsubscribes.forEach(unsub=>{
+    try{unsub();}catch{}
+  });
+  homeworkUnsubscribes=[];
+
+  if(legacyHomeworkUnsubscribe){
+    legacyHomeworkUnsubscribe();
+    legacyHomeworkUnsubscribe=null;
+  }
+}
+
+function currentWeekHomeworkKeys(){
+  const dates=DAY_NAMES.map((_,i)=>addDays(selectedMonday,i));
+  const keys=[];
+
+  for(let pIdx=0;pIdx<CONFIG.periods.length;pIdx++){
+    for(let i=0;i<dates.length;i++){
+      const subject=((CONFIG.schedule[weekType(selectedMonday)][DAY_NAMES[i]]||[])[pIdx]||"").trim();
+      if(subject && subject!=="-") keys.push(`${isoDate(dates[i])}_${pIdx}`);
+    }
+  }
+  return keys;
+}
+
 async function loadHomework(){
   resetHomeworkListeners();
   homeworkData={};
 
   const keys=currentWeekHomeworkKeys();
+
   if(!keys.length){
     setSync("● Keine Hausaufgaben-Slots in dieser Woche");
     return;
@@ -361,8 +389,7 @@ async function loadHomework(){
     };
 
     keys.forEach(hwKey=>{
-      const unsub=onSnapshot(
-        collection(db,"homework",hwKey,"entries"),
+      const unsub=db.collection("homework").doc(hwKey).collection("entries").onSnapshot(
         snap=>{
           homeworkData[hwKey]=[];
 
@@ -396,8 +423,7 @@ async function loadHomework(){
 async function loadLegacyHomework(){
   if(legacyHomeworkUnsubscribe) legacyHomeworkUnsubscribe();
 
-  legacyHomeworkUnsubscribe=onSnapshot(
-    collection(db,"homework"),
+  legacyHomeworkUnsubscribe=db.collection("homework").onSnapshot(
     snap=>{
       const visibleKeys=new Set(currentWeekHomeworkKeys());
 
@@ -444,15 +470,12 @@ async function saveHomeworkEntry(hwKey,entry){
   setSync("Speichert…");
 
   try{
-    await setDoc(
-      doc(db,"homework",hwKey,"entries",entry.id),
-      {
-        text:entry.text,
-        author:entry.author,
-        authorUid:user.uid,
-        createdAt:serverTimestamp()
-      }
-    );
+    await db.collection("homework").doc(hwKey).collection("entries").doc(entry.id).set({
+      text:entry.text,
+      author:entry.author,
+      authorUid:user.uid,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
 
     setSync("● Gespeichert · live für alle sichtbar");
     return true;
@@ -467,12 +490,10 @@ function setSync(msg){ document.getElementById("syncBar").textContent = msg; }
 
 function renderSetupBanner(){
   const el=document.getElementById("setupBanner");
-  if(sharedReady){ el.innerHTML=""; return; }
   if(localStorage.getItem("hideSetupBanner")){ el.innerHTML=""; return; }
 
-  const message=currentUser
-    ? "Bitte bestätige deine E-Mail-Adresse, bevor du gemeinsame Hausaufgaben verwendest."
-    : "Bitte melde dich mit deinem TobiServices-Konto an, um gemeinsame Hausaufgaben zu verwenden.";
+  const message="";
+  if(!message){ el.innerHTML=""; return; }
 
   el.innerHTML=`<div class="setupbanner">
     <b>Hinweis:</b> ${message}
@@ -657,8 +678,8 @@ async function reportEntry(hwKey,id,redraw){
 
   try{
     await setDoc(
-      doc(db,"homework",hwKey,"entries",id,"reports",currentUser.uid),
-      {createdAt:serverTimestamp()}
+      db.doc("homework/"+hwKey+"/entries/"+id+"/reports/"+currentUser.uid),
+      {createdAt:firebase.firestore.FieldValue.serverTimestamp()}
     );
     markReported(id);
     showToast("🚩 Meldung gespeichert");
@@ -742,7 +763,7 @@ renderAll();
 loadLegacyHomework();
 loadHomework();
 
-oldAuth.onAuthStateChanged(user=>{
+oldAuth.oldAuth.onAuthStateChanged(user=>{
   currentUser=user;
 });
 
@@ -766,6 +787,7 @@ document.getElementById("jumpToday").onclick=()=>{
   loadHomework();
   renderAll();
 };
+
 </script>
 </body>
 </html>
