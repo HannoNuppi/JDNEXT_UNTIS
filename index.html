@@ -238,7 +238,6 @@ const CONFIG = {
     },
   },
   // Zentrales TobiServices-Firebase-Projekt; Login kommt aus dem Account Center.
-  }
 };
 /* ===================================================================== */
 
@@ -430,9 +429,9 @@ function renderSetupBanner(){
   if(sharedReady){ el.innerHTML=""; return; }
   if(localStorage.getItem("hideSetupBanner")){ el.innerHTML=""; return; }
 
-  const message=SHARED_MODE
-    ? "Firebase ist konfiguriert, aber die sichere Anmeldung ist nicht verfügbar. Hausaufgaben werden in diesem Browser nur lokal gespeichert."
-    : "Firebase ist nicht konfiguriert. Hausaufgaben werden nur lokal in diesem Browser gespeichert.";
+  const message=currentUser
+    ? "Bitte bestätige deine E-Mail-Adresse, bevor du gemeinsame Hausaufgaben verwendest."
+    : "Bitte melde dich mit deinem TobiServices-Konto an, um gemeinsame Hausaufgaben zu verwenden.";
 
   el.innerHTML=`<div class="setupbanner">
     <b>Hinweis:</b> ${message}
