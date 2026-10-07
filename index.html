@@ -247,7 +247,7 @@ const DAY_SHORT = ["Mo","Di","Mi","Do","Fr"];
 let currentUser = null;
 let currentProfile = null;
 let sharedReady = false;
-let homeworkUnsubscribe = null;
+let homeworkUnsubscribes = [];
 let legacyHomeworkUnsubscribe = null;
 
 // Nur Altbestand aus früheren lokalen Tests; kein Online-Speicher mehr.
@@ -284,8 +284,15 @@ function isNonsense(text){
 
 /* ---- Zentraler TobiServices-Speicher ---- */
 function resetHomeworkListeners(){
-  if(homeworkUnsubscribe){ homeworkUnsubscribe(); homeworkUnsubscribe=null; }
-  if(legacyHomeworkUnsubscribe){ legacyHomeworkUnsubscribe(); legacyHomeworkUnsubscribe=null; }
+  homeworkUnsubscribes.forEach(unsub => {
+    try { unsub(); } catch {}
+  });
+  homeworkUnsubscribes = [];
+
+  if(legacyHomeworkUnsubscribe){
+    legacyHomeworkUnsubscribe();
+    legacyHomeworkUnsubscribe = null;
+  }
 }
 
 async function loadHomework(){
@@ -299,92 +306,65 @@ async function loadHomework(){
 
   setSync("Verbinde sicher mit TobiServices…");
 
+  const dates=DAY_NAMES.map((_,i)=>addDays(selectedMonday,i));
+  const hwKeys=[];
+
+  for(let pIdx=0;pIdx<CONFIG.periods.length;pIdx++){
+    for(let i=0;i<dates.length;i++){
+      const subject=((CONFIG.schedule[weekType(selectedMonday)][DAY_NAMES[i]]||[])[pIdx]||"").trim();
+      if(!subject || subject==="-") continue;
+      hwKeys.push(`${isoDate(dates[i])}_${pIdx}`);
+    }
+  }
+
+  if(!hwKeys.length){
+    setSync("● Keine Hausaufgaben-Slots in dieser Woche");
+    return;
+  }
+
   return new Promise(resolve=>{
-    let newDone=false, legacyDone=false, settled=false;
-    const finish=()=>{
-      if(!settled && newDone && legacyDone){
-        settled=true;
-        setSync("● Sicher live synchronisiert · für alle angemeldeten Nutzer");
+    let remaining=hwKeys.length;
+    let resolved=false;
+
+    const done=()=>{
+      remaining--;
+      if(!resolved && remaining<=0){
+        resolved=true;
+        setSync("● Sicher live synchronisiert · nur aktuelle Woche geladen");
         resolve();
       }
     };
 
-    homeworkUnsubscribe=onSnapshot(
-      collectionGroup(db,"entries"),
-      snap=>{
-        snap.forEach(d=>{
-          const parent=d.ref.parent?.parent;
-          if(!parent) return;
+    hwKeys.forEach(hwKey=>{
+      const unsub=onSnapshot(
+        collection(db,"homework",hwKey,"entries"),
+        snap=>{
+          homeworkData[hwKey]=[];
 
-          const hwKey=parent.id;
-          if(!homeworkData[hwKey]) homeworkData[hwKey]=[];
-
-          const data=d.data()||{};
-          const entry={
-            id:d.id,
-            text:typeof data.text==="string"?data.text:"",
-            author:typeof data.author==="string"?data.author:"",
-            authorUid:typeof data.authorUid==="string"?data.authorUid:"",
-            createdAt:data.createdAt||null,
-            legacy:false
-          };
-
-          const idx=homeworkData[hwKey].findIndex(e=>e.id===d.id);
-          if(idx>=0) homeworkData[hwKey][idx]=entry;
-          else homeworkData[hwKey].push(entry);
-        });
-
-        newDone=true;
-        renderTimetable();
-        finish();
-      },
-      err=>{
-        console.error("Firestore-Lesefehler:",err);
-        newDone=true;
-        setSync("⚠️ Sichere Firestore-Abfrage fehlgeschlagen.");
-        finish();
-      }
-    );
-
-    // Vorhandene Legacy-Dokumente bleiben lesbar, aber nicht veränderbar.
-    legacyHomeworkUnsubscribe=onSnapshot(
-      collection(db,"homework"),
-      snap=>{
-        snap.forEach(d=>{
-          const data=d.data()||{};
-          const entries=Array.isArray(data.entries)?data.entries:[];
-          if(!entries.length) return;
-
-          if(!homeworkData[d.id]) homeworkData[d.id]=[];
-
-          entries.forEach((legacyEntry,idx)=>{
-            const legacyId=typeof legacyEntry.id==="string"
-              ? legacyEntry.id
-              : `legacy_${d.id}_${legacyEntry.ts||idx}`;
-
-            if(homeworkData[d.id].some(e=>e.id===legacyId)) return;
-
-            homeworkData[d.id].push({
-              id:legacyId,
-              text:typeof legacyEntry.text==="string"?legacyEntry.text:"",
-              author:typeof legacyEntry.author==="string"?legacyEntry.author:"",
-              authorUid:"",
-              createdAt:null,
-              legacy:true
+          snap.forEach(d=>{
+            const data=d.data()||{};
+            homeworkData[hwKey].push({
+              id:d.id,
+              text:typeof data.text==="string"?data.text:"",
+              author:typeof data.author==="string"?data.author:"",
+              authorUid:typeof data.authorUid==="string"?data.authorUid:"",
+              createdAt:data.createdAt||null,
+              legacy:false
             });
           });
-        });
 
-        legacyDone=true;
-        renderTimetable();
-        finish();
-      },
-      err=>{
-        console.warn("Alte Hausaufgaben konnten nicht geladen werden:",err);
-        legacyDone=true;
-        finish();
-      }
-    );
+          renderTimetable();
+          done();
+        },
+        err=>{
+          console.error("Firestore-Lesefehler für",hwKey,err);
+          homeworkData[hwKey]=[];
+          done();
+        }
+      );
+
+      homeworkUnsubscribes.push(unsub);
+    });
   });
 }
 
