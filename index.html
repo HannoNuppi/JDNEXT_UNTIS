@@ -327,7 +327,6 @@ async function ensureAnonymousAuth(){
 async function loadHomework(){
   homeworkUnsubscribes.forEach(unsub=>{ try{unsub();}catch{} });
   homeworkUnsubscribes=[];
-  homeworkData={};
   const keys=currentWeekHomeworkKeys();
   if(!keys.length){
     setSync("● Keine Hausaufgaben-Slots in dieser Woche");
@@ -408,24 +407,26 @@ async function loadLegacyHomework(){
 }
 
 async function saveHomeworkEntry(hwKey,entry){
-  const user=await ensureAnonymousAuth();
-  if(!user){
-    showToast("⚠️ Hausaufgabe konnte nicht gespeichert werden");
-    return false;
-  }
+  // Posten ist absichtlich ohne TobiServices-Account möglich.
   setSync("Speichert…");
   try{
     await db.collection("homework").doc(hwKey).collection("entries").doc(entry.id).set({
       text:entry.text,
       author:entry.author,
-      authorUid:user.uid,
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    if(!homeworkData[hwKey]) homeworkData[hwKey]=[];
+    homeworkData[hwKey].push({
+      ...entry,
+      authorUid:"",
+      createdAt:null,
+      legacy:false
     });
     setSync("● Gespeichert · live für alle sichtbar");
     return true;
   }catch(e){
     console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
-    setSync("⚠️ Speichern verweigert");
+    setSync("⚠️ Speichern verweigert – Firebase Rules prüfen");
     return false;
   }
 }
@@ -533,10 +534,6 @@ function openModal(date,pIdx,subject){
         }else if(wasReported(e.id)){
           reportBtn.disabled=true;
           reportBtn.textContent="🚩 Gemeldet";
-        }else if(!sharedReady){
-          reportBtn.disabled=true;
-          reportBtn.textContent="🚩 Nur online";
-          reportBtn.title="Melden ist nur bei sicherer Firebase-Verbindung möglich.";
         }else{
           reportBtn.textContent="🚩 Melden";
           reportBtn.onclick=()=>reportEntry(hwKey,e.id,draw);
@@ -703,6 +700,8 @@ function renderAll(){
 }
 
 function reloadWeekData(){
+  resetHomeworkListeners();
+  homeworkData={};
   loadLegacyHomework();
   loadHomework();
   renderAll();
@@ -726,6 +725,7 @@ document.getElementById("jumpToday").onclick=()=>{
 // Der Stundenplan wird sofort gerendert; Firebase lädt Hausaufgaben parallel.
 renderSetupBanner();
 renderAll();
+homeworkData={};
 loadLegacyHomework();
 loadHomework();
 </script>
