@@ -78,8 +78,7 @@ service cloud.firestore {
     // Alte Array-Dokumente bleiben ausschließlich lesbar, damit vorhandene
     // Daten nicht verloren gehen. Neue Einträge liegen einzeln in entries.
     match /homework/{hwKey} {
-      allow read: if signedIn();
-      allow create, update, delete: if false;
+      allow read, create, update, delete: if false;
 
       match /entries/{entryId} {
         allow read: if signedIn();
