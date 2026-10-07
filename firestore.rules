@@ -3,22 +3,20 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Der Stundenplan darf ohne Account gelesen werden.
+    // Die Stundenplan-Hausaufgaben sind öffentlich lesbar.
     match /homework/{hwKey} {
       allow read: if true;
       allow create, update, delete: if false;
 
-      // Neue Hausaufgaben werden als einzelne, unveränderliche Dokumente gespeichert.
-      // JDNEXT verwendet dafür eine anonyme Firebase-UID; ein TobiServices-Account
-      // ist dafür nicht erforderlich.
+      // Neue Hausaufgaben dürfen ohne TobiServices-Account gepostet werden.
+      // Das Dokument ist nach dem Anlegen unveränderlich.
       match /entries/{entryId} {
         allow read: if true;
 
-        allow create: if request.auth != null
-          && request.resource.data.keys().hasOnly([
+        allow create: if
+          request.resource.data.keys().hasOnly([
             'text',
             'author',
-            'authorUid',
             'createdAt'
           ])
           && request.resource.data.text is string
@@ -26,14 +24,11 @@ service cloud.firestore {
           && request.resource.data.text.size() <= 1000
           && request.resource.data.author is string
           && request.resource.data.author.size() <= 80
-          && request.resource.data.authorUid == request.auth.uid
           && request.resource.data.createdAt == request.time;
 
-        // Nachträgliche Manipulation wird verhindert.
         allow update, delete: if false;
 
-        // Eine anonyme/angemeldete Firebase-Identität darf denselben Eintrag
-        // höchstens einmal melden. Reports selbst sind nicht öffentlich lesbar.
+        // Reports brauchen nur eine anonyme Firebase-Identität im Hintergrund.
         match /reports/{reportUid} {
           allow read: if false;
 
@@ -50,7 +45,6 @@ service cloud.firestore {
       }
     }
 
-    // Alles andere bleibt standardmäßig geschlossen.
     match /{document=**} {
       allow read, write: if false;
     }
