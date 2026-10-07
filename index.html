@@ -166,7 +166,7 @@
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
-      <button class="loginbtn" id="loginBtn">Anmelden</button>
+      <button class="loginbtn" id="loginBtn">TobiServices Account</button>
     </div>
   </div>
 
@@ -190,21 +190,36 @@
 <div class="toast" id="toast"></div>
 
 <script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  db,
-  onUser as onAccountUser,
-  requireLogin,
-  isAdmin,
-  CONFIG as ACCOUNT_CONFIG
-} from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js";
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
+  getFirestore,
   collection,
-  collectionGroup,
   doc,
   onSnapshot,
   setDoc,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const OLD_FIREBASE_CONFIG = Object.freeze({
+  apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
+  authDomain: "next-untis-plus.firebaseapp.com",
+  projectId: "next-untis-plus",
+  storageBucket: "next-untis-plus.firebasestorage.app",
+  messagingSenderId: "276114359651",
+  appId: "1:276114359651:web:c357fa4cc4f395bf55bf56",
+  measurementId: "G-VD8CKYNT8C"
+});
+
+const oldFirebaseApp = initializeApp(OLD_FIREBASE_CONFIG, "JDNEXT_UNTIS");
+const oldAuth = getAuth(oldFirebaseApp);
+const db = getFirestore(oldFirebaseApp);
+
+const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.html";
 
 /* =====================================================================
    KONFIGURATION — hier trägst du deinen Stundenplan ein.
@@ -245,12 +260,11 @@ const DAY_NAMES = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"];
 const DAY_SHORT = ["Mo","Di","Mi","Do","Fr"];
 
 let currentUser = null;
-let currentProfile = null;
-let sharedReady = false;
 let homeworkUnsubscribes = [];
 let legacyHomeworkUnsubscribe = null;
 
-// Nur Altbestand aus früheren lokalen Tests; kein Online-Speicher mehr.
+// Keine Anmeldung bei TobiServices nötig. Der alte UNTIS-Firebase-Account
+// wird nur anonym verwendet, damit neue Hausaufgaben einer unveränderlichen UID zugeordnet werden können.
 const LOCAL_KEY = "stundenplan_homework_local";
 let homeworkData = {};
 
@@ -282,16 +296,42 @@ function isNonsense(text){
   return false;
 }
 
-/* ---- Zentraler TobiServices-Speicher ---- */
+/* ---- Alter next-untis-plus Speicher ---- */
 function resetHomeworkListeners(){
-  homeworkUnsubscribes.forEach(unsub => {
-    try { unsub(); } catch {}
+  homeworkUnsubscribes.forEach(unsub=>{
+    try{unsub();}catch{}
   });
-  homeworkUnsubscribes = [];
+  homeworkUnsubscribes=[];
 
   if(legacyHomeworkUnsubscribe){
     legacyHomeworkUnsubscribe();
-    legacyHomeworkUnsubscribe = null;
+    legacyHomeworkUnsubscribe=null;
+  }
+}
+
+function currentWeekHomeworkKeys(){
+  const dates=DAY_NAMES.map((_,i)=>addDays(selectedMonday,i));
+  const keys=[];
+
+  for(let pIdx=0;pIdx<CONFIG.periods.length;pIdx++){
+    for(let i=0;i<dates.length;i++){
+      const subject=((CONFIG.schedule[weekType(selectedMonday)][DAY_NAMES[i]]||[])[pIdx]||"").trim();
+      if(subject && subject!=="-") keys.push(`${isoDate(dates[i])}_${pIdx}`);
+    }
+  }
+
+  return keys;
+}
+
+async function ensureAnonymousAuth(){
+  if(oldAuth.currentUser) return oldAuth.currentUser;
+
+  try{
+    const result=await signInAnonymously(oldAuth);
+    return result.user;
+  }catch(e){
+    console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
+    return null;
   }
 }
 
@@ -299,43 +339,28 @@ async function loadHomework(){
   resetHomeworkListeners();
   homeworkData={};
 
-  if(!sharedReady || !db){
-    setSync("🔐 Bitte anmelden, um gemeinsame Hausaufgaben zu sehen.");
-    return;
-  }
-
-  setSync("Verbinde sicher mit TobiServices…");
-
-  const dates=DAY_NAMES.map((_,i)=>addDays(selectedMonday,i));
-  const hwKeys=[];
-
-  for(let pIdx=0;pIdx<CONFIG.periods.length;pIdx++){
-    for(let i=0;i<dates.length;i++){
-      const subject=((CONFIG.schedule[weekType(selectedMonday)][DAY_NAMES[i]]||[])[pIdx]||"").trim();
-      if(!subject || subject==="-") continue;
-      hwKeys.push(`${isoDate(dates[i])}_${pIdx}`);
-    }
-  }
-
-  if(!hwKeys.length){
+  const keys=currentWeekHomeworkKeys();
+  if(!keys.length){
     setSync("● Keine Hausaufgaben-Slots in dieser Woche");
     return;
   }
 
+  setSync("Lade Hausaufgaben…");
+
   return new Promise(resolve=>{
-    let remaining=hwKeys.length;
-    let resolved=false;
+    let remaining=keys.length;
+    let finished=false;
 
     const done=()=>{
       remaining--;
-      if(!resolved && remaining<=0){
-        resolved=true;
-        setSync("● Sicher live synchronisiert · nur aktuelle Woche geladen");
+      if(!finished && remaining<=0){
+        finished=true;
+        setSync("● Live synchronisiert · Hausaufgaben öffentlich lesbar");
         resolve();
       }
     };
 
-    hwKeys.forEach(hwKey=>{
+    keys.forEach(hwKey=>{
       const unsub=onSnapshot(
         collection(db,"homework",hwKey,"entries"),
         snap=>{
@@ -357,7 +382,7 @@ async function loadHomework(){
           done();
         },
         err=>{
-          console.error("Firestore-Lesefehler für",hwKey,err);
+          console.error("Homework read failed:",hwKey,err);
           homeworkData[hwKey]=[];
           done();
         }
@@ -368,36 +393,72 @@ async function loadHomework(){
   });
 }
 
+async function loadLegacyHomework(){
+  if(legacyHomeworkUnsubscribe) legacyHomeworkUnsubscribe();
+
+  legacyHomeworkUnsubscribe=onSnapshot(
+    collection(db,"homework"),
+    snap=>{
+      const visibleKeys=new Set(currentWeekHomeworkKeys());
+
+      snap.forEach(d=>{
+        if(!visibleKeys.has(d.id)) return;
+
+        const data=d.data()||{};
+        const entries=Array.isArray(data.entries)?data.entries:[];
+        if(!entries.length) return;
+
+        if(!homeworkData[d.id]) homeworkData[d.id]=[];
+
+        entries.forEach((legacyEntry,idx)=>{
+          const legacyId=typeof legacyEntry.id==="string"
+            ? legacyEntry.id
+            : `legacy_${d.id}_${legacyEntry.ts||idx}`;
+
+          if(homeworkData[d.id].some(e=>e.id===legacyId)) return;
+
+          homeworkData[d.id].push({
+            id:legacyId,
+            text:typeof legacyEntry.text==="string"?legacyEntry.text:"",
+            author:typeof legacyEntry.author==="string"?legacyEntry.author:"",
+            authorUid:"",
+            createdAt:null,
+            legacy:true
+          });
+        });
+      });
+
+      renderTimetable();
+    },
+    err=>console.warn("Legacy homework read failed:",err)
+  );
+}
+
 async function saveHomeworkEntry(hwKey,entry){
-  if(!sharedReady || !db || !currentUser){
-    requireLogin(location.href);
+  const user=await ensureAnonymousAuth();
+  if(!user){
+    showToast("⚠️ Hausaufgabe konnte nicht gespeichert werden");
     return false;
   }
 
-  setSync("Speichert sicher…");
+  setSync("Speichert…");
 
   try{
-    const ref=doc(db,"homework",hwKey,"entries",entry.id);
+    await setDoc(
+      doc(db,"homework",hwKey,"entries",entry.id),
+      {
+        text:entry.text,
+        author:entry.author,
+        authorUid:user.uid,
+        createdAt:serverTimestamp()
+      }
+    );
 
-    await setDoc(ref,{
-      text:entry.text,
-      author:entry.author,
-      authorUid:currentUser.uid,
-      createdAt:serverTimestamp()
-    });
-
-    if(!homeworkData[hwKey]) homeworkData[hwKey]=[];
-    homeworkData[hwKey].push({
-      ...entry,
-      authorUid:currentUser.uid,
-      legacy:false
-    });
-
-    setSync("● Gespeichert · sicher live für alle sichtbar");
+    setSync("● Gespeichert · live für alle sichtbar");
     return true;
   }catch(e){
-    console.error("Firestore-Speicherfehler:",e);
-    setSync("⚠️ Speichern verweigert — sichere Firestore-Regeln prüfen");
+    console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
+    setSync("⚠️ Speichern verweigert");
     return false;
   }
 }
@@ -627,18 +688,9 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
-function updateAccountButton(profile){
-  const btn=document.getElementById("loginBtn");
-  if(!btn) return;
-
-  if(profile){
-    btn.textContent=isAdmin(profile) ? "👑 Admin / Account" : "👤 Account";
-    btn.onclick=()=>location.href=ACCOUNT_CONFIG.accountUrl;
-  }else{
-    btn.textContent="Anmelden";
-    btn.onclick=()=>requireLogin(location.href);
-  }
-}
+document.getElementById("loginBtn").onclick=()=>{
+  location.href=ACCOUNT_URL;
+};
 
 // ---- PWA / App-Installation ----
 let deferredInstallPrompt = null;
@@ -687,26 +739,33 @@ function renderAll(){ renderWeekNav(); renderTimetable(); }
 renderSetupBanner();
 renderAll();
 
-onAccountUser(async (user,profile)=>{
+loadLegacyHomework();
+loadHomework();
+
+oldAuth.onAuthStateChanged(user=>{
   currentUser=user;
-  currentProfile=profile;
-  sharedReady=!!user && user.emailVerified;
-
-  updateAccountButton(profile);
-
-  if(sharedReady){
-    await loadHomework();
-  }else{
-    resetHomeworkListeners();
-    homeworkData={};
-    setSync(user
-      ? "✉️ Bitte bestätige deine E-Mail-Adresse, um Hausaufgaben zu verwenden."
-      : "🔐 Bitte anmelden, um gemeinsame Hausaufgaben zu sehen.");
-    renderTimetable();
-  }
-
-  renderAll();
 });
+
+document.getElementById("prevWeek").onclick=()=>{
+  selectedMonday=addDays(selectedMonday,-7);
+  loadLegacyHomework();
+  loadHomework();
+  renderAll();
+};
+
+document.getElementById("nextWeek").onclick=()=>{
+  selectedMonday=addDays(selectedMonday,7);
+  loadLegacyHomework();
+  loadHomework();
+  renderAll();
+};
+
+document.getElementById("jumpToday").onclick=()=>{
+  selectedMonday=mondayOf(new Date());
+  loadLegacyHomework();
+  loadHomework();
+  renderAll();
+};
 </script>
 </body>
 </html>
