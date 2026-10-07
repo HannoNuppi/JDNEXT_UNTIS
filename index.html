@@ -289,11 +289,8 @@ function isNonsense(text){
 
 /* ---- Alter next-untis-plus Speicher ---- */
 function resetHomeworkListeners(){
-  homeworkUnsubscribes.forEach(unsub=>{
-    try{unsub();}catch{}
-  });
+  homeworkUnsubscribes.forEach(unsub=>{ try{unsub();}catch{} });
   homeworkUnsubscribes=[];
-
   if(legacyHomeworkUnsubscribe){
     legacyHomeworkUnsubscribe();
     legacyHomeworkUnsubscribe=null;
@@ -303,82 +300,37 @@ function resetHomeworkListeners(){
 function currentWeekHomeworkKeys(){
   const dates=DAY_NAMES.map((_,i)=>addDays(selectedMonday,i));
   const keys=[];
-
   for(let pIdx=0;pIdx<CONFIG.periods.length;pIdx++){
     for(let i=0;i<dates.length;i++){
       const subject=((CONFIG.schedule[weekType(selectedMonday)][DAY_NAMES[i]]||[])[pIdx]||"").trim();
-      if(subject && subject!=="-") keys.push(`${isoDate(dates[i])}_${pIdx}`);
+      if(subject && subject!=="-") keys.push(isoDate(dates[i])+"_"+pIdx);
     }
   }
-
   return keys;
 }
 
 async function ensureAnonymousAuth(){
   if(oldAuth.currentUser) return oldAuth.currentUser;
-
   try{
-    const result=await signInAnonymously(oldAuth);
-    return result.user;
+    return (await oldAuth.signInAnonymously()).user;
   }catch(e){
     console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
     return null;
   }
-}
-
-async async function ensureAnonymousAuth(){
-  if(oldAuth.currentUser) return oldAuth.currentUser;
-  try{
-    const result=await oldAuth.signInAnonymously();
-    return result.user;
-  }catch(e){
-    console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
-    return null;
-  }
-}
-
-function resetHomeworkListeners(){
-  homeworkUnsubscribes.forEach(unsub=>{
-    try{unsub();}catch{}
-  });
-  homeworkUnsubscribes=[];
-
-  if(legacyHomeworkUnsubscribe){
-    legacyHomeworkUnsubscribe();
-    legacyHomeworkUnsubscribe=null;
-  }
-}
-
-function currentWeekHomeworkKeys(){
-  const dates=DAY_NAMES.map((_,i)=>addDays(selectedMonday,i));
-  const keys=[];
-
-  for(let pIdx=0;pIdx<CONFIG.periods.length;pIdx++){
-    for(let i=0;i<dates.length;i++){
-      const subject=((CONFIG.schedule[weekType(selectedMonday)][DAY_NAMES[i]]||[])[pIdx]||"").trim();
-      if(subject && subject!=="-") keys.push(`${isoDate(dates[i])}_${pIdx}`);
-    }
-  }
-  return keys;
 }
 
 async function loadHomework(){
   resetHomeworkListeners();
   homeworkData={};
-
   const keys=currentWeekHomeworkKeys();
-
   if(!keys.length){
     setSync("● Keine Hausaufgaben-Slots in dieser Woche");
     return;
   }
-
   setSync("Lade Hausaufgaben…");
-
+  let remaining=keys.length;
+  let finished=false;
   return new Promise(resolve=>{
-    let remaining=keys.length;
-    let finished=false;
-
     const done=()=>{
       remaining--;
       if(!finished && remaining<=0){
@@ -387,12 +339,10 @@ async function loadHomework(){
         resolve();
       }
     };
-
     keys.forEach(hwKey=>{
       const unsub=db.collection("homework").doc(hwKey).collection("entries").onSnapshot(
         snap=>{
           homeworkData[hwKey]=[];
-
           snap.forEach(d=>{
             const data=d.data()||{};
             homeworkData[hwKey].push({
@@ -404,7 +354,6 @@ async function loadHomework(){
               legacy:false
             });
           });
-
           renderTimetable();
           done();
         },
@@ -414,7 +363,6 @@ async function loadHomework(){
           done();
         }
       );
-
       homeworkUnsubscribes.push(unsub);
     });
   });
@@ -422,27 +370,18 @@ async function loadHomework(){
 
 async function loadLegacyHomework(){
   if(legacyHomeworkUnsubscribe) legacyHomeworkUnsubscribe();
-
   legacyHomeworkUnsubscribe=db.collection("homework").onSnapshot(
     snap=>{
       const visibleKeys=new Set(currentWeekHomeworkKeys());
-
       snap.forEach(d=>{
         if(!visibleKeys.has(d.id)) return;
-
         const data=d.data()||{};
         const entries=Array.isArray(data.entries)?data.entries:[];
         if(!entries.length) return;
-
         if(!homeworkData[d.id]) homeworkData[d.id]=[];
-
         entries.forEach((legacyEntry,idx)=>{
-          const legacyId=typeof legacyEntry.id==="string"
-            ? legacyEntry.id
-            : `legacy_${d.id}_${legacyEntry.ts||idx}`;
-
+          const legacyId=typeof legacyEntry.id==="string" ? legacyEntry.id : "legacy_"+d.id+"_"+(legacyEntry.ts||idx);
           if(homeworkData[d.id].some(e=>e.id===legacyId)) return;
-
           homeworkData[d.id].push({
             id:legacyId,
             text:typeof legacyEntry.text==="string"?legacyEntry.text:"",
@@ -453,7 +392,6 @@ async function loadLegacyHomework(){
           });
         });
       });
-
       renderTimetable();
     },
     err=>console.warn("Legacy homework read failed:",err)
@@ -466,9 +404,7 @@ async function saveHomeworkEntry(hwKey,entry){
     showToast("⚠️ Hausaufgabe konnte nicht gespeichert werden");
     return false;
   }
-
   setSync("Speichert…");
-
   try{
     await db.collection("homework").doc(hwKey).collection("entries").doc(entry.id).set({
       text:entry.text,
@@ -476,7 +412,6 @@ async function saveHomeworkEntry(hwKey,entry){
       authorUid:user.uid,
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
     });
-
     setSync("● Gespeichert · live für alle sichtbar");
     return true;
   }catch(e){
@@ -485,7 +420,6 @@ async function saveHomeworkEntry(hwKey,entry){
     return false;
   }
 }
-
 function setSync(msg){ document.getElementById("syncBar").textContent = msg; }
 
 function renderSetupBanner(){
@@ -668,24 +602,18 @@ function markReported(id){
 
 async function reportEntry(hwKey,id,redraw){
   if(wasReported(id)) return;
-  if(!db){
-    showToast("⚠️ Firebase ist momentan nicht verfügbar");
+  const user=await ensureAnonymousAuth();
+  if(!user){
+    showToast("⚠️ Meldungen sind momentan nicht verfügbar");
     return;
   }
-
   const entry=(homeworkData[hwKey]||[]).find(e=>e.id===id);
   if(!entry || entry.legacy) return;
-
   try{
-    const user = await ensureAnonymousAuth();
-    if(!user){
-      showToast("⚠️ Meldungen sind momentan nicht verfügbar");
-      return;
-    }
-
-    await db.doc("homework/"+hwKey+"/entries/"+id+"/reports/"+user.uid).set({
-      createdAt:firebase.firestore.FieldValue.serverTimestamp()
-    });
+    await db.collection("homework").doc(hwKey).collection("entries").doc(id)
+      .collection("reports").doc(user.uid).set({
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
     markReported(id);
     showToast("🚩 Meldung gespeichert");
     redraw();
@@ -760,22 +688,35 @@ oldAuth.onAuthStateChanged(user=>{
   currentUser=user;
 });
 
+function renderAll(){
+  renderWeekNav();
+  renderTimetable();
+}
 
-
-document.getElementById("nextWeek").onclick=()=>{
-  selectedMonday=addDays(selectedMonday,7);
+function reloadWeekData(){
   loadLegacyHomework();
   loadHomework();
   renderAll();
+}
+
+document.getElementById("prevWeek").onclick=()=>{
+  selectedMonday=addDays(selectedMonday,-7);
+  reloadWeekData();
+};
+
+document.getElementById("nextWeek").onclick=()=>{
+  selectedMonday=addDays(selectedMonday,7);
+  reloadWeekData();
 };
 
 document.getElementById("jumpToday").onclick=()=>{
   selectedMonday=mondayOf(new Date());
-  loadLegacyHomework();
-  loadHomework();
-  renderAll();
+  reloadWeekData();
 };
 
+// Der Stundenplan wird sofort gerendert; Firebase lädt Hausaufgaben parallel.
+loadLegacyHomework();
+loadHomework();
 </script>
 </body>
 </html>
