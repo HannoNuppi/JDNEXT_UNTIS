@@ -704,6 +704,7 @@ document.getElementById("jumpToday").onclick = ()=>{ selectedMonday = mondayOf(n
 
 function renderAll(){ renderWeekNav(); renderTimetable(); }
 
+renderSetupBanner();
 renderAll();
 
 onAccountUser(async (user,profile)=>{
