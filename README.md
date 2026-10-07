@@ -1,26 +1,36 @@
 # JDNEXT UNTIS
 
-Ein A/B-Wochen-Stundenplan mit gemeinsamen Hausaufgaben als PWA.
+A/B-Wochen-Stundenplan mit gemeinsamen Hausaufgaben als PWA.
 
-## Zentraler TobiServices-Login
+## Hausaufgaben
 
-Die App verwendet jetzt das zentrale Konto-System aus
-[HannoNuppi/Tobiservices-Account](https://github.com/HannoNuppi/Tobiservices-Account).
+JDNEXT verwendet weiterhin das ursprüngliche Firebase-Projekt **next-untis-plus**.
 
-- Anmeldung über TobiServices Account Center
-- gemeinsame Firebase-Authentifizierung
-- Hausaufgaben werden nur für angemeldete und per E-Mail verifizierte Konten gelesen/geschrieben
-- Admin-Tags werden aus dem zentralen Accountprofil übernommen
+Hausaufgaben sind **öffentlich lesbar**. Dafür ist kein TobiServices-Konto notwendig.
 
-Die konkrete Firebase-Sicherheit steht in `firestore.rules`. Dieselben Regeln müssen im Firebase-Projekt `tobiservices` veröffentlicht werden.
+Neue Einträge werden als einzelne, unveränderliche Firestore-Dokumente gespeichert. Die Website verwendet dafür automatisch eine anonyme Firebase-Authentifizierung im Hintergrund. Ein TobiServices-Konto ist dafür nicht erforderlich.
 
-## Wichtiger Datenbank-Hinweis
+## TobiServices Account
 
-Die frühere Version verwendete das Firebase-Projekt `next-untis-plus`.
-Der aktuelle Stand verwendet `tobiservices`, damit Account-UID und Hausaufgaben dieselbe Authentifizierungsbasis haben.
+Der Button „TobiServices Account“ öffnet optional das zentrale Account Center:
 
-Alte Daten aus dem alten Firebase-Projekt werden dadurch nicht automatisch migriert.
+https://hannonuppi.github.io/Tobiservices-Account/
 
-## GitHub Pages
+Wichtig: Die beiden Firebase-Projekte bleiben getrennt. Der TobiServices-Account wird nicht benötigt, um den Stundenplan oder öffentliche Hausaufgaben zu benutzen.
 
-Die Seite kann direkt über GitHub Pages veröffentlicht werden. Der Service Worker und das Manifest machen sie als PWA installierbar.
+## Sicherheit
+
+- öffentliche Leserechte für Hausaufgaben
+- keine öffentlichen Update-/Delete-Rechte
+- serverseitige Feld- und Längenvalidierung
+- Ersteller-UID wird durch Firestore Rules geprüft
+- einzelne Einträge statt gemeinsam überschreibbarer Arrays
+- Reports können pro Firebase-Identität nur einmal angelegt werden
+- sensible Report-Daten sind nicht öffentlich lesbar
+- alles außerhalb der Hausaufgaben ist standardmäßig geschlossen
+
+Die Rules aus `firestore.rules` müssen im Firebase-Projekt `next-untis-plus` veröffentlicht werden.
+
+## GitHub Pages / PWA
+
+Die App kann direkt über GitHub Pages betrieben und als PWA installiert werden.
