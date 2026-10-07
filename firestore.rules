@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Legacy-Dokumente:
+    // Alte homework/{hwKey}-Dokumente dürfen nach dem Umbau nur noch
+    // von angemeldeten Nutzern gelesen werden. Direkte Änderungen sind
+    // absichtlich verboten, damit die alte Array-Struktur nicht wieder
+    // die Sicherheitsgrenze umgeht.
+    match /homework/{hwKey} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+
+      // Neue, einzeln abgesicherte Hausaufgaben.
+      match /entries/{entryId} {
+        allow read: if request.auth != null;
+
+        allow create: if request.auth != null
+          && request.resource.data.keys().hasOnly([
+            'text',
+            'author',
+            'authorUid',
+            'createdAt'
+          ])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 3
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.author is string
+          && request.resource.data.author.size() <= 80
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+
+        // Hausaufgaben dürfen über den Client weder nachträglich
+        // manipuliert noch gelöscht werden.
+        allow update, delete: if false;
+
+        // Eine Person darf einen Eintrag höchstens einmal melden:
+        // Die UID ist gleichzeitig die ID des Report-Dokuments.
+        match /reports/{reportUid} {
+          allow read: if request.auth != null;
+
+          allow create: if request.auth != null
+            && reportUid == request.auth.uid
+            && exists(
+              /databases/$(database)/documents/homework/$(hwKey)/entries/$(entryId)
+            )
+            && request.resource.data.keys().hasOnly(['createdAt'])
+            && request.resource.data.createdAt == request.time;
+
+          allow update, delete: if false;
+        }
+      }
+    }
+  }
+}
