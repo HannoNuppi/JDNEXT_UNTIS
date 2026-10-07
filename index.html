@@ -6,9 +6,7 @@
 <title>Stundenplan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+
 <style>
   :root{
     --bg-a:#0a0c2a; --bg-b:#171154; --bg-c:#2a1264;
@@ -168,7 +166,7 @@
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
-      <button class="loginbtn" id="loginBtn">Login</button>
+      <button class="loginbtn" id="loginBtn">Anmelden</button>
     </div>
   </div>
 
@@ -191,7 +189,23 @@
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
-<script>
+<script type="module">
+import {
+  db,
+  onUser as onAccountUser,
+  requireLogin,
+  isAdmin,
+  CONFIG as ACCOUNT_CONFIG
+} from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js";
+import {
+  collection,
+  collectionGroup,
+  doc,
+  onSnapshot,
+  setDoc,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
 /* =====================================================================
    KONFIGURATION — hier trägst du deinen Stundenplan ein.
    ===================================================================== */
@@ -223,56 +237,22 @@ const CONFIG = {
       Freitag:    ["Wahlpflicht", "Englisch",    "Chemie", "Politik",  "",          ""],
     },
   },
-  // Gemeinsame Hausaufgaben über Firebase Firestore
-  firebase: {
-    apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
-    authDomain: "next-untis-plus.firebaseapp.com",
-    databaseURL: "https://next-untis-plus-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "next-untis-plus",
-    storageBucket: "next-untis-plus.firebasestorage.app",
-    messagingSenderId: "276114359651",
-    appId: "1:276114359651:web:c357fa4cc4f395bf55bf56",
-    measurementId: "G-VD8CKYNT8C"
+  // Zentrales TobiServices-Firebase-Projekt; Login kommt aus dem Account Center.
   }
 };
 /* ===================================================================== */
 
 const DAY_NAMES = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"];
 const DAY_SHORT = ["Mo","Di","Mi","Do","Fr"];
-const SHARED_MODE = !!(
-  CONFIG.firebase &&
-  CONFIG.firebase.apiKey &&
-  CONFIG.firebase.projectId
-);
 
-let db = null;
-let auth = null;
 let currentUser = null;
+let currentProfile = null;
 let sharedReady = false;
 let homeworkUnsubscribe = null;
 let legacyHomeworkUnsubscribe = null;
 
-async function initializeFirebase(){
-  if(!SHARED_MODE) return false;
-  try{
-    if(!firebase.apps.length) firebase.initializeApp(CONFIG.firebase);
-    db = firebase.firestore();
-    auth = firebase.auth();
-    if(!auth.currentUser) await auth.signInAnonymously();
-    currentUser = auth.currentUser;
-    sharedReady = !!currentUser;
-    return sharedReady;
-  }catch(e){
-    console.error("Firebase konnte nicht sicher initialisiert werden:", e);
-    db = null; auth = null; currentUser = null; sharedReady = false;
-    return false;
-  }
-}
+// Nur Altbestand aus früheren lokalen Tests; kein Online-Speicher mehr.
 const LOCAL_KEY = "stundenplan_homework_local";
-// kleine Liste offensichtlicher Platzhalter/Spam-Wörter, keine Schimpfwortliste
-const JUNK_WORDS = ["asdf","asdfasdf","test123","lorem ipsum","quatsch","xxxxx","keine ahnung lol","idk"];
-
-let selectedMonday = mondayOf(new Date());
 let homeworkData = {};
 
 function pad(n){ return n.toString().padStart(2,"0"); }
@@ -303,76 +283,89 @@ function isNonsense(text){
   return false;
 }
 
-/* ---- Datenspeicher: sichere Firestore-Subcollections, sonst lokal ---- */
+/* ---- Zentraler TobiServices-Speicher ---- */
 function resetHomeworkListeners(){
   if(homeworkUnsubscribe){ homeworkUnsubscribe(); homeworkUnsubscribe=null; }
   if(legacyHomeworkUnsubscribe){ legacyHomeworkUnsubscribe(); legacyHomeworkUnsubscribe=null; }
 }
 
 async function loadHomework(){
+  resetHomeworkListeners();
+  homeworkData={};
+
   if(!sharedReady || !db){
-    try{ homeworkData=JSON.parse(localStorage.getItem(LOCAL_KEY)||"{}"); }catch(e){ homeworkData={}; }
-    setSync("⚠️ Firebase-Anmeldung nicht verfügbar — nur lokal gespeichert");
+    setSync("🔐 Bitte anmelden, um gemeinsame Hausaufgaben zu sehen.");
     return;
   }
 
-  setSync("Verbinde sicher mit Firebase…");
-  resetHomeworkListeners();
-  homeworkData={};
+  setSync("Verbinde sicher mit TobiServices…");
 
   return new Promise(resolve=>{
     let newDone=false, legacyDone=false, settled=false;
     const finish=()=>{
       if(!settled && newDone && legacyDone){
         settled=true;
-        setSync("● Sicher live synchronisiert · für alle sichtbar");
+        setSync("● Sicher live synchronisiert · für alle angemeldeten Nutzer");
         resolve();
       }
     };
 
-    homeworkUnsubscribe=db.collectionGroup("entries").onSnapshot(
+    homeworkUnsubscribe=onSnapshot(
+      collectionGroup(db,"entries"),
       snap=>{
-        snap.forEach(doc=>{
-          const parent=doc.ref.parent && doc.ref.parent.parent;
+        snap.forEach(d=>{
+          const parent=d.ref.parent?.parent;
           if(!parent) return;
+
           const hwKey=parent.id;
           if(!homeworkData[hwKey]) homeworkData[hwKey]=[];
-          const data=doc.data()||{};
+
+          const data=d.data()||{};
           const entry={
-            id:doc.id,
+            id:d.id,
             text:typeof data.text==="string"?data.text:"",
             author:typeof data.author==="string"?data.author:"",
             authorUid:typeof data.authorUid==="string"?data.authorUid:"",
             createdAt:data.createdAt||null,
             legacy:false
           };
-          const idx=homeworkData[hwKey].findIndex(e=>e.id===doc.id);
+
+          const idx=homeworkData[hwKey].findIndex(e=>e.id===d.id);
           if(idx>=0) homeworkData[hwKey][idx]=entry;
           else homeworkData[hwKey].push(entry);
         });
-        newDone=true; renderTimetable(); finish();
+
+        newDone=true;
+        renderTimetable();
+        finish();
       },
       err=>{
         console.error("Firestore-Lesefehler:",err);
         newDone=true;
-        setSync("⚠️ Firestore-Zugriff verweigert — sichere Rules prüfen");
+        setSync("⚠️ Sichere Firestore-Abfrage fehlgeschlagen.");
         finish();
       }
     );
 
-    legacyHomeworkUnsubscribe=db.collection("homework").onSnapshot(
+    // Vorhandene Legacy-Dokumente bleiben lesbar, aber nicht veränderbar.
+    legacyHomeworkUnsubscribe=onSnapshot(
+      collection(db,"homework"),
       snap=>{
-        snap.forEach(doc=>{
-          const data=doc.data()||{};
+        snap.forEach(d=>{
+          const data=d.data()||{};
           const entries=Array.isArray(data.entries)?data.entries:[];
           if(!entries.length) return;
-          if(!homeworkData[doc.id]) homeworkData[doc.id]=[];
+
+          if(!homeworkData[d.id]) homeworkData[d.id]=[];
+
           entries.forEach((legacyEntry,idx)=>{
             const legacyId=typeof legacyEntry.id==="string"
               ? legacyEntry.id
-              : `legacy_${doc.id}_${legacyEntry.ts||idx}`;
-            if(homeworkData[doc.id].some(e=>e.id===legacyId)) return;
-            homeworkData[doc.id].push({
+              : `legacy_${d.id}_${legacyEntry.ts||idx}`;
+
+            if(homeworkData[d.id].some(e=>e.id===legacyId)) return;
+
+            homeworkData[d.id].push({
               id:legacyId,
               text:typeof legacyEntry.text==="string"?legacyEntry.text:"",
               author:typeof legacyEntry.author==="string"?legacyEntry.author:"",
@@ -382,11 +375,15 @@ async function loadHomework(){
             });
           });
         });
-        legacyDone=true; renderTimetable(); finish();
+
+        legacyDone=true;
+        renderTimetable();
+        finish();
       },
       err=>{
-        console.warn("Legacy-Hausaufgaben konnten nicht geladen werden:",err);
-        legacyDone=true; finish();
+        console.warn("Alte Hausaufgaben konnten nicht geladen werden:",err);
+        legacyDone=true;
+        finish();
       }
     );
   });
@@ -394,28 +391,29 @@ async function loadHomework(){
 
 async function saveHomeworkEntry(hwKey,entry){
   if(!sharedReady || !db || !currentUser){
-    try{
-      if(!homeworkData[hwKey]) homeworkData[hwKey]=[];
-      homeworkData[hwKey].push(entry);
-      localStorage.setItem(LOCAL_KEY,JSON.stringify(homeworkData));
-      setSync("Nur lokal gespeichert (Firebase-Anmeldung nicht verfügbar)");
-      return true;
-    }catch(e){
-      console.error("Lokales Speichern fehlgeschlagen:",e);
-      return false;
-    }
+    requireLogin(location.href);
+    return false;
   }
 
   setSync("Speichert sicher…");
+
   try{
-    await db.collection("homework").doc(hwKey).collection("entries").doc(entry.id).create({
+    const ref=doc(db,"homework",hwKey,"entries",entry.id);
+
+    await setDoc(ref,{
       text:entry.text,
       author:entry.author,
       authorUid:currentUser.uid,
-      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      createdAt:serverTimestamp()
     });
+
     if(!homeworkData[hwKey]) homeworkData[hwKey]=[];
-    homeworkData[hwKey].push({...entry,authorUid:currentUser.uid,legacy:false});
+    homeworkData[hwKey].push({
+      ...entry,
+      authorUid:currentUser.uid,
+      legacy:false
+    });
+
     setSync("● Gespeichert · sicher live für alle sichtbar");
     return true;
   }catch(e){
@@ -618,10 +616,10 @@ async function reportEntry(hwKey,id,redraw){
   if(!entry || entry.legacy) return;
 
   try{
-    await db.collection("homework").doc(hwKey).collection("entries").doc(id)
-      .collection("reports").doc(currentUser.uid).create({
-        createdAt:firebase.firestore.FieldValue.serverTimestamp()
-      });
+    await setDoc(
+      doc(db,"homework",hwKey,"entries",id,"reports",currentUser.uid),
+      {createdAt:serverTimestamp()}
+    );
     markReported(id);
     showToast("🚩 Meldung gespeichert");
     redraw();
@@ -650,10 +648,18 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
-document.getElementById("loginBtn").textContent="🔐 Sicher verbunden";
-document.getElementById("loginBtn").onclick=()=>{
-  showToast(sharedReady ? "🔐 Firebase-Verbindung ist authentifiziert" : "⚠️ Firebase-Anmeldung nicht verfügbar");
-};
+function updateAccountButton(profile){
+  const btn=document.getElementById("loginBtn");
+  if(!btn) return;
+
+  if(profile){
+    btn.textContent=isAdmin(profile) ? "👑 Admin / Account" : "👤 Account";
+    btn.onclick=()=>location.href=ACCOUNT_CONFIG.accountUrl;
+  }else{
+    btn.textContent="Anmelden";
+    btn.onclick=()=>requireLogin(location.href);
+  }
+}
 
 // ---- PWA / App-Installation ----
 let deferredInstallPrompt = null;
@@ -699,12 +705,28 @@ document.getElementById("jumpToday").onclick = ()=>{ selectedMonday = mondayOf(n
 
 function renderAll(){ renderWeekNav(); renderTimetable(); }
 
-(async function init(){
-  await initializeFirebase();
-  renderSetupBanner();
-  await loadHomework();
+renderAll();
+
+onAccountUser(async (user,profile)=>{
+  currentUser=user;
+  currentProfile=profile;
+  sharedReady=!!user && user.emailVerified;
+
+  updateAccountButton(profile);
+
+  if(sharedReady){
+    await loadHomework();
+  }else{
+    resetHomeworkListeners();
+    homeworkData={};
+    setSync(user
+      ? "✉️ Bitte bestätige deine E-Mail-Adresse, um Hausaufgaben zu verwenden."
+      : "🔐 Bitte anmelden, um gemeinsame Hausaufgaben zu sehen.");
+    renderTimetable();
+  }
+
   renderAll();
-})();
+});
 </script>
 </body>
 </html>
