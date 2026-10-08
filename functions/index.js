@@ -54,13 +54,22 @@ function parseDataUrl(dataUrl) {
 }
 
 function safeFilename(filename, mime) {
-  const fallback = mime === "image/png" ? "jdnext.png" : "jdnext.jpg";
-  const cleaned = String(filename || fallback)
-    .replace(/[^a-zA-Z0-9._-]+/g, "_")
-    .slice(0, 100);
+  const extension = mime === "image/png"
+    ? ".png"
+    : mime === "image/webp"
+      ? ".webp"
+      : mime === "image/gif"
+        ? ".gif"
+        : ".jpg";
 
-  if (!cleaned || cleaned === "." || cleaned === "..") return fallback;
-  return cleaned.includes(".") ? cleaned : fallback;
+  const base = String(filename || "jdnext-image")
+    .replace(/\\/g, "/")
+    .split("/").pop()
+    .replace(/\.[a-zA-Z0-9]{1,8}$/, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .slice(0, 90);
+
+  return (base || "jdnext-image") + extension;
 }
 
 async function discordFetch(path, options = {}) {
@@ -155,11 +164,17 @@ exports.resolveJdnextDiscordImage = onCall({ secrets: [DISCORD_BOT_TOKEN] }, asy
     { method: "GET" }
   );
 
+  if (String(message?.channel_id || "") !== DISCORD_CHANNEL_ID) {
+    throw new HttpsError("not-found", "Discord-Bild nicht gefunden.");
+  }
+
   const attachment = Array.isArray(message?.attachments)
     ? message.attachments.find(a => String(a.id) === attachmentId)
     : null;
 
-  if (!attachment?.url || !String(attachment.url).startsWith("https://cdn.discordapp.com/")) {
+  if (!attachment?.url ||
+      !String(attachment.url).startsWith("https://cdn.discordapp.com/") ||
+      !String(attachment.content_type || "").startsWith("image/")) {
     throw new HttpsError("not-found", "Discord-Bild nicht gefunden.");
   }
 
