@@ -587,7 +587,7 @@ function renderTimetable(){
       const isFree = subject==="" || subject==="-";
       const dateKey = isoDate(dates[i]);
       const hwKey = `${dateKey}_${pIdx}`;
-      const entries = homeworkData[hwKey] || [];
+      const entries = getHomeworkEntries(hwKey);
       const c = el("div","cell subjcell" + (isFree?" free":""));
       c.innerHTML = isFree ? "–" : `<div class="sname">${subject}</div>${entries.length?`<div class="hwdot">${entries.length}</div>`:""}`;
       if(!isFree){
@@ -722,7 +722,7 @@ async function reportEntry(hwKey,id,redraw){
     showToast("⚠️ Meldungen sind momentan nicht verfügbar");
     return;
   }
-  const entry=(homeworkData[hwKey]||[]).find(e=>e.id===id);
+  const entry=getHomeworkEntries(hwKey).find(e=>e.id===id);
   if(!entry || entry.legacy) return;
   try{
     await db.collection("homework").doc(hwKey).collection("entries").doc(id)
