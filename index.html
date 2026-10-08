@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
 
 <style>
   :root{
@@ -99,10 +100,35 @@
   .subjcell.free{color:var(--muted); cursor:default; font-size:12px;}
   .subjcell .sname{font-family:'Baloo 2'; font-weight:700; font-size:13px; line-height:1.25;}
   .hwdot{
-    position:absolute; top:6px; right:6px; min-width:16px; height:16px; padding:0 4px; border-radius:999px;
+    position:absolute; bottom:6px; right:6px; min-width:16px; height:16px; padding:0 4px; border-radius:999px;
     background:linear-gradient(90deg,var(--cyan),var(--violet)); color:#0a0c2a; font-size:9px; font-weight:700;
     font-family:'Baloo 2'; display:flex; align-items:center; justify-content:center;
   }
+  .subjcell.classwork .sname{color:var(--gold); text-shadow:0 0 10px rgba(255,204,77,.42);}
+  .subjcell.classwork{box-shadow:inset 0 0 22px rgba(255,204,77,.08);}
+  .subjcell .sname{padding-right:30px;}
+  .classwork-btn{
+    position:absolute; top:5px; right:5px; z-index:2; border:1px solid rgba(255,204,77,.55);
+    background:rgba(255,204,77,.08); color:var(--gold); border-radius:7px; width:28px; height:20px;
+    padding:0; font:700 9px 'Baloo 2'; cursor:pointer; line-height:18px;
+  }
+  .classwork-btn:hover{background:rgba(255,204,77,.2);}
+  .classwork-section{background:rgba(255,204,77,.07);border:1px solid rgba(255,204,77,.24);border-radius:12px;padding:10px 12px;margin-bottom:12px;}
+  .classwork-section h3{font-family:'Baloo 2';font-size:14px;color:var(--gold);margin:0 0 7px;}
+  .classwork-item{font-size:13px;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);}
+  .classwork-item:first-child{border-top:0;padding-top:0;}
+  .classwork-meta{font-size:10px;color:var(--muted);margin-top:3px;}
+  .classwork-add{display:flex;gap:7px;margin-top:8px;}
+  .classwork-add input{flex:1;min-width:0;}
+  .classwork-add button{padding:7px 10px;font-size:11px;}
+  .image-picker{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .image-picker input{padding:7px;}
+  .image-list{display:flex;gap:7px;flex-wrap:wrap;}
+  .image-chip{font-size:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);border-radius:999px;padding:5px 8px;color:var(--muted);}
+  .image-gallery{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  .image-gallery a{display:block;width:110px;height:82px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:rgba(0,0,0,.2);}
+  .image-gallery img{width:100%;height:100%;object-fit:cover;display:block;}
+  .image-status{font-size:11px;color:var(--muted);margin-top:5px;}
 
   .overlay{
     position:fixed; inset:0; background:rgba(5,6,20,0.72); backdrop-filter:blur(3px);
@@ -230,6 +256,9 @@ if(!firebase.apps.length){
 const oldFirebaseApp = firebase.app();
 const oldAuth = firebase.auth();
 const db = firebase.firestore();
+const jdFunctions = firebase.functions(oldFirebaseApp, "europe-west1");
+const uploadDiscordImageCall = jdFunctions.httpsCallable("uploadJdnextImage");
+const resolveDiscordImageCall = jdFunctions.httpsCallable("resolveJdnextDiscordImage");
 
 const TOBI_FIREBASE_CONFIG = Object.freeze({
   apiKey: "AIzaSyCwVh8-JIm-pj8N8bOWgwz8-G_cLQ6AVuQ",
@@ -289,6 +318,8 @@ let currentUser = null;
 let selectedMonday = mondayOf(new Date());
 let homeworkUnsubscribes = [];
 let legacyHomeworkUnsubscribe = null;
+let classworkUnsubscribes = [];
+const discordUrlCache = new Map();
 
 // Keine Anmeldung bei TobiServices nötig. Der alte UNTIS-Firebase-Account
 // wird nur anonym verwendet, damit neue Hausaufgaben einer unveränderlichen UID zugeordnet werden können.
@@ -296,6 +327,7 @@ const LOCAL_KEY = "stundenplan_homework_local";
 let homeworkData = {};
 let sharedHomeworkData = {};
 let legacyHomeworkData = {};
+let classworkData = {};
 let sharedReady = true;
 let maintenanceInitialized = false;
 let maintenanceEnabled = false;
@@ -399,6 +431,8 @@ function startMaintenanceListener(){
 function resetHomeworkListeners(){
   homeworkUnsubscribes.forEach(unsub=>{ try{unsub();}catch{} });
   homeworkUnsubscribes=[];
+  classworkUnsubscribes.forEach(unsub=>{ try{unsub();}catch{} });
+  classworkUnsubscribes=[];
   if(legacyHomeworkUnsubscribe){
     legacyHomeworkUnsubscribe();
     legacyHomeworkUnsubscribe=null;
@@ -425,6 +459,107 @@ async function ensureAnonymousAuth(){
     console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
     return null;
   }
+}
+
+function getClassworkEntries(key){
+  return Array.isArray(classworkData[key]) ? classworkData[key] : [];
+}
+
+async function loadClasswork(){
+  classworkUnsubscribes.forEach(unsub=>{ try{unsub();}catch{} });
+  classworkUnsubscribes=[];
+  const keys=currentWeekHomeworkKeys();
+  keys.forEach(key=>{
+    const unsub=db.collection("classwork").doc(key).collection("entries").onSnapshot(
+      snap=>{
+        const entries=[];
+        snap.forEach(d=>{
+          const data=d.data()||{};
+          entries.push({
+            id:d.id,
+            title:typeof data.title==="string"?data.title:"",
+            createdAt:data.createdAt||null
+          });
+        });
+        classworkData[key]=entries;
+        renderTimetable();
+      },
+      err=>{
+        console.warn("Classwork read failed:",key,err);
+        classworkData[key]=[];
+        renderTimetable();
+      }
+    );
+    classworkUnsubscribes.push(unsub);
+  });
+}
+
+async function saveClassworkEntry(key,title){
+  const user=await ensureAnonymousAuth();
+  if(!user) throw new Error("anonymous-auth-unavailable");
+  const clean=String(title||"").trim();
+  if(clean.length<2||clean.length>120) throw new Error("Die Bezeichnung muss 2–120 Zeichen lang sein.");
+  const id=genId();
+  await db.collection("classwork").doc(key).collection("entries").doc(id).set({
+    title:clean,
+    createdBy:user.uid,
+    createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  });
+  return true;
+}
+
+async function uploadImageToDiscord(dataUrl,filename){
+  try{
+    const result=await uploadDiscordImageCall({dataUrl,filename});
+    return result.data;
+  }catch(error){
+    console.error("Discord-Bildupload fehlgeschlagen:",error);
+    throw new Error(error?.message||"Bild konnte nicht zu Discord hochgeladen werden.");
+  }
+}
+
+async function resolveDiscordImage(ref){
+  const key=String(ref?.messageId||"")+":"+String(ref?.attachmentId||"");
+  if(discordUrlCache.has(key)) return discordUrlCache.get(key);
+  try{
+    const result=await resolveDiscordImageCall({
+      messageId:String(ref?.messageId||""),
+      attachmentId:String(ref?.attachmentId||"")
+    });
+    const url=result.data?.url;
+    if(typeof url==="string" && url.startsWith("https://cdn.discordapp.com/")){
+      discordUrlCache.set(key,url);
+      return url;
+    }
+  }catch(error){
+    console.warn("Discord-CDN-URL konnte nicht erneuert werden:",error);
+  }
+  return null;
+}
+
+function renderDiscordGallery(container,images){
+  if(!Array.isArray(images)||!images.length)return;
+  const gallery=el("div","image-gallery");
+  container.appendChild(gallery);
+  images.forEach(async ref=>{
+    const url=await resolveDiscordImage(ref);
+    if(!url){
+      const failed=el("div","image-status");
+      failed.textContent="Bild momentan nicht verfügbar.";
+      gallery.appendChild(failed);
+      return;
+    }
+    const link=document.createElement("a");
+    link.href=url;
+    link.target="_blank";
+    link.rel="noopener noreferrer";
+    const img=document.createElement("img");
+    img.loading="lazy";
+    img.alt=String(ref.filename||"Hausaufgabenbild");
+    img.src=url;
+    link.appendChild(img);
+    gallery.appendChild(link);
+  });
 }
 
 async function loadHomework(){
@@ -459,6 +594,7 @@ async function loadHomework(){
               author:typeof data.author==="string"?data.author:"",
               authorUid:typeof data.authorUid==="string"?data.authorUid:"",
               createdAt:data.createdAt||null,
+              images:Array.isArray(data.images)?data.images:[],
               legacy:false
             });
           });
@@ -502,6 +638,7 @@ async function loadLegacyHomework(){
             author:typeof legacyEntry.author==="string"?legacyEntry.author:"",
             authorUid:"",
             createdAt:null,
+            images:Array.isArray(legacyEntry.images)?legacyEntry.images:[],
             legacy:true
           });
         });
@@ -514,18 +651,20 @@ async function loadLegacyHomework(){
   );
 }
 
-async function saveHomeworkEntry(hwKey,entry){
+async function saveHomeworkEntry(hwKey,entry,images=[]){
   // Posten ist absichtlich ohne TobiServices-Account möglich.
   setSync("Speichert…");
   try{
     await db.collection("homework").doc(hwKey).collection("entries").doc(entry.id).set({
       text:entry.text,
       author:entry.author,
+      images:Array.isArray(images)?images.slice(0,3):[],
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
     });
     if(!sharedHomeworkData[hwKey]) sharedHomeworkData[hwKey]=[];
     sharedHomeworkData[hwKey].push({
       ...entry,
+      images:Array.isArray(images)?images.slice(0,3):[],
       authorUid:"",
       createdAt:null,
       legacy:false
@@ -588,10 +727,23 @@ function renderTimetable(){
       const dateKey = isoDate(dates[i]);
       const hwKey = `${dateKey}_${pIdx}`;
       const entries = getHomeworkEntries(hwKey);
-      const c = el("div","cell subjcell" + (isFree?" free":""));
+      const classworkEntries=getClassworkEntries(hwKey);
+      const hasClasswork=classworkEntries.length>0;
+      const c = el("div","cell subjcell" + (isFree?" free":"") + (hasClasswork?" classwork":""));
       c.innerHTML = isFree ? "–" : `<div class="sname">${subject}</div>${entries.length?`<div class="hwdot">${entries.length}</div>`:""}`;
       if(!isFree){
         c.addEventListener("click", ()=> openModal(dates[i], pIdx, subject));
+        const ka=document.createElement("button");
+        ka.type="button";
+        ka.className="classwork-btn";
+        ka.textContent="KA+";
+        ka.title="Klassenarbeit hinzufügen";
+        ka.setAttribute("aria-label","Klassenarbeit hinzufügen");
+        ka.addEventListener("click",event=>{
+          event.stopPropagation();
+          openModal(dates[i],pIdx,subject,true);
+        });
+        c.appendChild(ka);
       }
       tt.appendChild(c);
     });
@@ -599,7 +751,7 @@ function renderTimetable(){
 }
 function el(tag, cls){ const e=document.createElement(tag); e.className=cls; return e; }
 
-function openModal(date,pIdx,subject){
+function openModal(date,pIdx,subject,focusClasswork=false){
   const dateKey=isoDate(date);
   const hwKey=`${dateKey}_${pIdx}`;
   const p=CONFIG.periods[pIdx];
@@ -612,15 +764,42 @@ function openModal(date,pIdx,subject){
       <button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>
       <h2 id="modalSubject"></h2>
       <div class="msub" id="modalSub"></div>
+      <div class="classwork-section">
+        <h3>Klassenarbeiten</h3>
+        <div class="classwork-list"></div>
+        <div class="classwork-add">
+          <input type="text" class="jd-input classwork-title" maxlength="120" placeholder="z. B. Klassenarbeit / Vokabeltest">
+          <button type="button" class="hwsave classwork-save">KA+</button>
+        </div>
+      </div>
       <div class="hwlist"></div>
       <div class="hwform">
         <input type="text" class="hwauthor" maxlength="80" placeholder="Dein Name (optional)" autocomplete="name">
         <textarea class="hwtext" maxlength="1000" placeholder="Hausaufgabe eintragen…" spellcheck="true"></textarea>
+        <div class="image-picker">
+          <input type="file" class="hwimages" accept="image/jpeg,image/png,image/webp,image/gif" multiple>
+          <span class="image-status">Bis zu 3 Bilder</span>
+        </div>
+        <div class="image-list"></div>
         <div class="hwerror" id="hwerror"></div>
         <button class="hwsave">Speichern</button>
       </div>`;
     modal.querySelector("#modalSubject").textContent=subject;
     modal.querySelector("#modalSub").textContent=`${fmtLong(date)} · ${p.label} Stunde (${p.time})`;
+
+    const classList=modal.querySelector(".classwork-list");
+    const classItems=getClassworkEntries(hwKey);
+    if(!classItems.length){
+      const empty=el("div","image-status");
+      empty.textContent="Noch keine Klassenarbeit eingetragen.";
+      classList.appendChild(empty);
+    }else{
+      classItems.forEach(item=>{
+        const row=el("div","classwork-item");
+        row.textContent=item.title||"Klassenarbeit";
+        classList.appendChild(row);
+      });
+    }
 
     const list=modal.querySelector(".hwlist");
     if(!entries.length){
@@ -654,11 +833,50 @@ function openModal(date,pIdx,subject){
         const textNode=document.createElement("div");
         textNode.textContent=e.text;
         item.appendChild(textNode);
+        renderDiscordGallery(item,e.images);
         list.appendChild(item);
       });
     }
 
     modal.querySelector("#closeModal").onclick=closeModal;
+
+    const classworkSave=modal.querySelector(".classwork-save");
+    classworkSave.onclick=async()=>{
+      const input=modal.querySelector(".classwork-title");
+      const title=input.value.trim();
+      if(!title)return;
+      classworkSave.disabled=true;
+      classworkSave.textContent="…";
+      try{
+        await saveClassworkEntry(hwKey,title);
+        input.value="";
+        showToast("✅ Klassenarbeit eingetragen");
+        if(focusClasswork) renderTimetable();
+      }catch(error){
+        console.error(error);
+        showToast(error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
+      }finally{
+        classworkSave.disabled=false;
+        classworkSave.textContent="KA+";
+      }
+    };
+
+    const imageInput=modal.querySelector(".hwimages");
+    const imageList=modal.querySelector(".image-list");
+    imageInput.onchange=()=>{
+      imageList.innerHTML="";
+      [...imageInput.files].slice(0,3).forEach(file=>{
+        const chip=el("span","image-chip");
+        chip.textContent=file.name;
+        imageList.appendChild(chip);
+      });
+      if(imageInput.files.length>3){
+        const chip=el("span","image-chip");
+        chip.textContent="Nur die ersten 3 Bilder werden verwendet.";
+        imageList.appendChild(chip);
+      }
+    };
+
     const saveBtn=modal.querySelector(".hwsave");
 
     saveBtn.onclick=async()=>{
@@ -684,10 +902,30 @@ function openModal(date,pIdx,subject){
 
       saveBtn.disabled=true;
       saveBtn.textContent="Speichert…";
-      const ok=await saveHomeworkEntry(hwKey,{id:genId(),text,author});
-      saveBtn.disabled=false;
-      saveBtn.textContent="Speichern";
-      if(ok){ draw(); renderTimetable(); }
+      try{
+        const files=[...imageInput.files].slice(0,3);
+        const imageRefs=[];
+        for(let index=0;index<files.length;index++){
+          saveBtn.textContent=`Bild ${index+1}/${files.length}…`;
+          const compressed=await compressImageFile(files[index]);
+          const uploaded=await uploadImageToDiscord(compressed,files[index].name);
+          imageRefs.push({
+            messageId:String(uploaded.messageId),
+            attachmentId:String(uploaded.attachmentId),
+            filename:String(uploaded.filename||files[index].name).slice(0,120)
+          });
+        }
+        saveBtn.textContent="Speichert…";
+        const ok=await saveHomeworkEntry(hwKey,{id:genId(),text,author},imageRefs);
+        saveBtn.disabled=false;
+        saveBtn.textContent="Speichern";
+        if(ok){ draw(); renderTimetable(); }
+      }catch(error){
+        console.error(error);
+        errEl.textContent=error?.message||"Bild oder Hausaufgabe konnte nicht gespeichert werden.";
+        saveBtn.disabled=false;
+        saveBtn.textContent="Speichern";
+      }
     };
   }
 
@@ -698,6 +936,32 @@ function openModal(date,pIdx,subject){
 function genId(){
   if(window.crypto && typeof crypto.randomUUID==="function") return crypto.randomUUID();
   return Date.now().toString(36)+Math.random().toString(36).slice(2,10);
+}
+
+async function compressImageFile(file){
+  if(!file.type.startsWith("image/")) throw new Error("Bitte nur Bilder auswählen.");
+  if(file.size>20*1024*1024) throw new Error("Das Bild darf höchstens 20 MB groß sein.");
+
+  const bitmap=await createImageBitmap(file);
+  const maxSide=1600;
+  const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement("canvas");
+  canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+  canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  const ctx=canvas.getContext("2d",{alpha:false});
+  ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);
+  bitmap.close();
+
+  const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.84));
+  if(!blob) throw new Error("Bild konnte nicht verarbeitet werden.");
+  if(blob.size>7*1024*1024) throw new Error("Das Bild ist nach der Komprimierung noch zu groß.");
+  const bytes=new Uint8Array(await blob.arrayBuffer());
+  let binary="";
+  const chunk=0x8000;
+  for(let i=0;i<bytes.length;i+=chunk){
+    binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
+  }
+  return "data:image/jpeg;base64,"+btoa(binary);
 }
 
 function wasReported(id){
@@ -812,10 +1076,12 @@ function reloadWeekData(){
   resetHomeworkListeners();
   sharedHomeworkData={};
   legacyHomeworkData={};
+  classworkData={};
   homeworkData={};
   renderAll();
   if(!maintenanceEnabled){
     loadLegacyHomework();
+    loadClasswork();
     loadHomework();
   }
 }
