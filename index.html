@@ -109,6 +109,20 @@
     display:none; align-items:center; justify-content:center; z-index:50; padding:16px;
   }
   .overlay.show{display:flex;}
+  body.maintenance-pending .wrap{visibility:hidden;}
+  .maintenance-overlay{
+    position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    z-index:100; padding:24px; background:rgba(5,6,20,.86); backdrop-filter:blur(8px);
+  }
+  .maintenance-overlay.show{display:flex;pointer-events:auto;}
+  .maintenance-card{
+    width:100%; max-width:560px; text-align:center; border-radius:24px; padding:30px 24px;
+    background:linear-gradient(160deg,var(--bg-b),var(--bg-c)); border:1px solid var(--line);
+    box-shadow:0 0 50px rgba(139,59,255,.35);
+  }
+  .maintenance-card .icon{font-size:42px; margin-bottom:10px;}
+  .maintenance-card h2{font-family:'Baloo 2'; font-size:26px; margin:0 0 6px;}
+  .maintenance-card p{color:var(--muted); font-size:14px; line-height:1.6; margin:8px 0 0; white-space:pre-wrap;}
   .modal{
     width:100%; max-width:420px; max-height:85vh; overflow-y:auto; border-radius:20px;
     background:linear-gradient(160deg,var(--bg-b),var(--bg-c)); border:1px solid var(--line);
@@ -160,7 +174,7 @@
   }
 </style>
 </head>
-<body>
+<body class="maintenance-pending">
 <div class="wrap">
   <div class="topbar">
     <div class="logo">
@@ -189,6 +203,13 @@
   <div class="syncbar" id="syncBar"></div>
 </div>
 
+<div class="maintenance-overlay" id="maintenanceOverlay" aria-live="polite">
+  <div class="maintenance-card">
+    <div class="icon">🛠️</div>
+    <h2>Website in Wartung</h2>
+    <p id="maintenanceMessage">JDNEXT ist momentan vorübergehend nicht verfügbar.</p>
+  </div>
+</div>
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
@@ -209,6 +230,20 @@ if(!firebase.apps.length){
 const oldFirebaseApp = firebase.app();
 const oldAuth = firebase.auth();
 const db = firebase.firestore();
+
+const TOBI_FIREBASE_CONFIG = Object.freeze({
+  apiKey: "AIzaSyCwVh8-JIm-pj8N8bOWgwz8-G_cLQ6AVuQ",
+  authDomain: "tobiservices.firebaseapp.com",
+  projectId: "tobiservices",
+  storageBucket: "tobiservices.firebasestorage.app",
+  messagingSenderId: "552906640909",
+  appId: "1:552906640909:web:99f583a0f4145e96ee8f44",
+  measurementId: "G-9LKPHE93S1"
+});
+const tobiApp = firebase.apps.some(app=>app.name==="JDNEXT_TobiServices")
+  ? firebase.app("JDNEXT_TobiServices")
+  : firebase.initializeApp(TOBI_FIREBASE_CONFIG,"JDNEXT_TobiServices");
+const tobiDb = firebase.firestore(tobiApp);
 
 const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.html";
 
@@ -259,7 +294,11 @@ let legacyHomeworkUnsubscribe = null;
 // wird nur anonym verwendet, damit neue Hausaufgaben einer unveränderlichen UID zugeordnet werden können.
 const LOCAL_KEY = "stundenplan_homework_local";
 let homeworkData = {};
+let sharedHomeworkData = {};
+let legacyHomeworkData = {};
 let sharedReady = true;
+let maintenanceInitialized = false;
+let maintenanceEnabled = false;
 
 function pad(n){ return n.toString().padStart(2,"0"); }
 function isoDate(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
@@ -293,6 +332,70 @@ function isNonsense(text){
 }
 
 /* ---- Alter next-untis-plus Speicher ---- */
+function rebuildHomeworkData(){
+  const merged={};
+  const keys=new Set([...Object.keys(sharedHomeworkData),...Object.keys(legacyHomeworkData)]);
+  keys.forEach(key=>{
+    const shared=Array.isArray(sharedHomeworkData[key])?sharedHomeworkData[key]:[];
+    const legacy=Array.isArray(legacyHomeworkData[key])?legacyHomeworkData[key]:[];
+    const seen=new Set();
+    merged[key]=[...shared,...legacy].filter(entry=>{
+      if(!entry?.id || seen.has(entry.id)) return false;
+      seen.add(entry.id);
+      return true;
+    });
+  });
+  homeworkData=merged;
+}
+
+function getHomeworkEntries(hwKey){
+  const shared=Array.isArray(sharedHomeworkData[hwKey])?sharedHomeworkData[hwKey]:[];
+  const legacy=Array.isArray(legacyHomeworkData[hwKey])?legacyHomeworkData[hwKey]:[];
+  return [...shared,...legacy];
+}
+
+function applyMaintenanceState(enabled,message){
+  maintenanceEnabled=enabled;
+  const overlay=document.getElementById("maintenanceOverlay");
+  const messageEl=document.getElementById("maintenanceMessage");
+  if(messageEl) messageEl.textContent=message || "JDNEXT ist momentan vorübergehend nicht verfügbar.";
+  if(overlay) overlay.classList.toggle("show",enabled);
+  document.body.classList.remove("maintenance-pending");
+}
+
+function startMaintenanceListener(){
+  tobiDb.collection("siteSettings").doc("jdnext").onSnapshot(
+    snap=>{
+      const data=snap.exists ? (snap.data()||{}) : {};
+      const enabled=data.enabled===true;
+      const message=typeof data.message==="string" ? data.message.trim() : "";
+      const changed=!maintenanceInitialized || enabled!==maintenanceEnabled;
+      maintenanceInitialized=true;
+      applyMaintenanceState(enabled,message);
+
+      if(changed){
+        if(enabled){
+          resetHomeworkListeners();
+          sharedHomeworkData={};
+          legacyHomeworkData={};
+          homeworkData={};
+          renderAll();
+        }else{
+          reloadWeekData();
+        }
+      }
+    },
+    err=>{
+      console.warn("Maintenance-Status konnte nicht geladen werden:",err);
+      if(!maintenanceInitialized){
+        maintenanceInitialized=true;
+        applyMaintenanceState(false,"");
+        reloadWeekData();
+      }
+    }
+  );
+}
+
 function resetHomeworkListeners(){
   homeworkUnsubscribes.forEach(unsub=>{ try{unsub();}catch{} });
   homeworkUnsubscribes=[];
@@ -347,7 +450,7 @@ async function loadHomework(){
     keys.forEach(hwKey=>{
       const unsub=db.collection("homework").doc(hwKey).collection("entries").onSnapshot(
         snap=>{
-          homeworkData[hwKey]=[];
+          sharedHomeworkData[hwKey]=[];
           snap.forEach(d=>{
             const data=d.data()||{};
             homeworkData[hwKey].push({
@@ -359,6 +462,7 @@ async function loadHomework(){
               legacy:false
             });
           });
+          rebuildHomeworkData();
           renderTimetable();
           done();
         },
@@ -381,16 +485,16 @@ async function loadLegacyHomework(){
   legacyHomeworkUnsubscribe=db.collection("homework").onSnapshot(
     snap=>{
       const visibleKeys=new Set(currentWeekHomeworkKeys());
+      const nextLegacy={};
       snap.forEach(d=>{
         if(!visibleKeys.has(d.id)) return;
         const data=d.data()||{};
         const entries=Array.isArray(data.entries)?data.entries:[];
         if(!entries.length) return;
-        if(!homeworkData[d.id]) homeworkData[d.id]=[];
+        nextLegacy[d.id]=[];
         entries.forEach((legacyEntry,idx)=>{
           const legacyId=typeof legacyEntry.id==="string" ? legacyEntry.id : "legacy_"+d.id+"_"+(legacyEntry.ts||idx);
-          if(homeworkData[d.id].some(e=>e.id===legacyId)) return;
-          homeworkData[d.id].push({
+          nextLegacy[d.id].push({
             id:legacyId,
             text:typeof legacyEntry.text==="string"?legacyEntry.text:"",
             author:typeof legacyEntry.author==="string"?legacyEntry.author:"",
@@ -400,6 +504,8 @@ async function loadLegacyHomework(){
           });
         });
       });
+      legacyHomeworkData=nextLegacy;
+      rebuildHomeworkData();
       renderTimetable();
     },
     err=>console.warn("Legacy homework read failed:",err)
@@ -415,13 +521,14 @@ async function saveHomeworkEntry(hwKey,entry){
       author:entry.author,
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
     });
-    if(!homeworkData[hwKey]) homeworkData[hwKey]=[];
-    homeworkData[hwKey].push({
+    if(!sharedHomeworkData[hwKey]) sharedHomeworkData[hwKey]=[];
+    sharedHomeworkData[hwKey].push({
       ...entry,
       authorUid:"",
       createdAt:null,
       legacy:false
     });
+    rebuildHomeworkData();
     setSync("● Gespeichert · live für alle sichtbar");
     return true;
   }catch(e){
@@ -498,7 +605,7 @@ function openModal(date,pIdx,subject){
   const modal=document.getElementById("modal");
 
   function draw(){
-    const entries=homeworkData[hwKey]||[];
+    const entries=getHomeworkEntries(hwKey);
     modal.innerHTML=`
       <button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>
       <h2 id="modalSubject"></h2>
@@ -701,10 +808,14 @@ function renderAll(){
 
 function reloadWeekData(){
   resetHomeworkListeners();
+  sharedHomeworkData={};
+  legacyHomeworkData={};
   homeworkData={};
-  loadLegacyHomework();
-  loadHomework();
   renderAll();
+  if(!maintenanceEnabled){
+    loadLegacyHomework();
+    loadHomework();
+  }
 }
 
 document.getElementById("prevWeek").onclick=()=>{
@@ -722,12 +833,10 @@ document.getElementById("jumpToday").onclick=()=>{
   reloadWeekData();
 };
 
-// Der Stundenplan wird sofort gerendert; Firebase lädt Hausaufgaben parallel.
+// Maintenance-Status zuerst prüfen. Im Normalbetrieb werden danach die Hausaufgaben geladen.
 renderSetupBanner();
 renderAll();
-homeworkData={};
-loadLegacyHomework();
-loadHomework();
+startMaintenanceListener();
 </script>
 </body>
 </html>
