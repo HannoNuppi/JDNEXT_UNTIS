@@ -27,17 +27,50 @@ service cloud.firestore {
           && request.resource.data.author.size() <= 80
           && request.resource.data.images is list
           && request.resource.data.images.size() <= 3
-          && request.resource.data.images.all(image =>
-            image is map
-            && image.keys().hasOnly(['messageId','attachmentId','filename'])
-            && image.messageId is string
-            && image.messageId.size() >= 5
-            && image.messageId.size() <= 30
-            && image.attachmentId is string
-            && image.attachmentId.size() >= 5
-            && image.attachmentId.size() <= 30
-            && image.filename is string
-            && image.filename.size() <= 120
+          && (
+            request.resource.data.images.size() == 0
+            || (
+              request.resource.data.images[0] is map
+              && request.resource.data.images[0].keys().hasOnly(['messageId','attachmentId','filename'])
+              && request.resource.data.images[0].messageId is string
+              && request.resource.data.images[0].attachmentId is string
+              && request.resource.data.images[0].filename is string
+              && request.resource.data.images[0].messageId.size() >= 15
+              && request.resource.data.images[0].messageId.size() <= 25
+              && request.resource.data.images[0].attachmentId.size() >= 15
+              && request.resource.data.images[0].attachmentId.size() <= 25
+              && request.resource.data.images[0].filename.size() <= 120
+            )
+          )
+          && (
+            request.resource.data.images.size() < 2
+            || (
+              request.resource.data.images[1] is map
+              && request.resource.data.images[1].keys().hasOnly(['messageId','attachmentId','filename'])
+              && request.resource.data.images[1].messageId is string
+              && request.resource.data.images[1].attachmentId is string
+              && request.resource.data.images[1].filename is string
+              && request.resource.data.images[1].messageId.size() >= 15
+              && request.resource.data.images[1].messageId.size() <= 25
+              && request.resource.data.images[1].attachmentId.size() >= 15
+              && request.resource.data.images[1].attachmentId.size() <= 25
+              && request.resource.data.images[1].filename.size() <= 120
+            )
+          )
+          && (
+            request.resource.data.images.size() < 3
+            || (
+              request.resource.data.images[2] is map
+              && request.resource.data.images[2].keys().hasOnly(['messageId','attachmentId','filename'])
+              && request.resource.data.images[2].messageId is string
+              && request.resource.data.images[2].attachmentId is string
+              && request.resource.data.images[2].filename is string
+              && request.resource.data.images[2].messageId.size() >= 15
+              && request.resource.data.images[2].messageId.size() <= 25
+              && request.resource.data.images[2].attachmentId.size() >= 15
+              && request.resource.data.images[2].attachmentId.size() <= 25
+              && request.resource.data.images[2].filename.size() <= 120
+            )
           )
           && request.resource.data.createdAt == request.time;
 
