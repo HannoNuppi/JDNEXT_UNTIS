@@ -114,13 +114,16 @@
   }
   .classwork-btn:hover{background:rgba(255,204,77,.2);}
   .classwork-section{background:rgba(255,204,77,.07);border:1px solid rgba(255,204,77,.24);border-radius:12px;padding:10px 12px;margin-bottom:12px;}
-  .classwork-section h3{font-family:'Baloo 2';font-size:14px;color:var(--gold);margin:0 0 7px;}
+  .classwork-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;}
+  .classwork-section h3{font-family:'Baloo 2';font-size:14px;color:var(--gold);margin:0;}
+  .classwork-save{flex:0 0 auto;width:24px;height:18px;padding:0;border:1px solid rgba(255,204,77,.55);
+    background:rgba(255,204,77,.08);color:var(--gold);border-radius:6px;font:700 8px 'Baloo 2';cursor:pointer;line-height:16px;}
+  .classwork-save:hover{background:rgba(255,204,77,.2);}
   .classwork-item{font-size:13px;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);}
   .classwork-item:first-child{border-top:0;padding-top:0;}
   .classwork-meta{font-size:10px;color:var(--muted);margin-top:3px;}
   .classwork-add{display:flex;gap:7px;margin-top:8px;}
   .classwork-add input{flex:1;min-width:0;}
-  .classwork-add button{padding:7px 10px;font-size:11px;}
   .image-picker{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .image-picker input{padding:7px;}
   .image-list{display:flex;gap:7px;flex-wrap:wrap;}
@@ -733,17 +736,6 @@ function renderTimetable(){
       c.innerHTML = isFree ? "–" : `<div class="sname">${subject}</div>${entries.length?`<div class="hwdot">${entries.length}</div>`:""}`;
       if(!isFree){
         c.addEventListener("click", ()=> openModal(dates[i], pIdx, subject));
-        const ka=document.createElement("button");
-        ka.type="button";
-        ka.className="classwork-btn";
-        ka.textContent="KA+";
-        ka.title="Klassenarbeit hinzufügen";
-        ka.setAttribute("aria-label","Klassenarbeit hinzufügen");
-        ka.addEventListener("click",event=>{
-          event.stopPropagation();
-          openModal(dates[i],pIdx,subject,true);
-        });
-        c.appendChild(ka);
       }
       tt.appendChild(c);
     });
@@ -751,7 +743,7 @@ function renderTimetable(){
 }
 function el(tag, cls){ const e=document.createElement(tag); e.className=cls; return e; }
 
-function openModal(date,pIdx,subject,focusClasswork=false){
+function openModal(date,pIdx,subject){
   const dateKey=isoDate(date);
   const hwKey=`${dateKey}_${pIdx}`;
   const p=CONFIG.periods[pIdx];
@@ -765,11 +757,13 @@ function openModal(date,pIdx,subject,focusClasswork=false){
       <h2 id="modalSubject"></h2>
       <div class="msub" id="modalSub"></div>
       <div class="classwork-section">
-        <h3>Klassenarbeiten</h3>
+        <div class="classwork-head">
+          <h3>Klassenarbeiten</h3>
+          <button type="button" class="classwork-save">KA+</button>
+        </div>
         <div class="classwork-list"></div>
         <div class="classwork-add">
           <input type="text" class="jd-input classwork-title" maxlength="120" placeholder="z. B. Klassenarbeit / Vokabeltest">
-          <button type="button" class="hwsave classwork-save">KA+</button>
         </div>
       </div>
       <div class="hwlist"></div>
@@ -851,7 +845,7 @@ function openModal(date,pIdx,subject,focusClasswork=false){
         await saveClassworkEntry(hwKey,title);
         input.value="";
         showToast("✅ Klassenarbeit eingetragen");
-        if(focusClasswork) renderTimetable();
+        renderTimetable();
       }catch(error){
         console.error(error);
         showToast(error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
