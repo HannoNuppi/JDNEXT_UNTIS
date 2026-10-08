@@ -17,6 +17,7 @@ service cloud.firestore {
           request.resource.data.keys().hasOnly([
             'text',
             'author',
+            'images',
             'createdAt'
           ])
           && request.resource.data.text is string
@@ -24,6 +25,20 @@ service cloud.firestore {
           && request.resource.data.text.size() <= 1000
           && request.resource.data.author is string
           && request.resource.data.author.size() <= 80
+          && request.resource.data.images is list
+          && request.resource.data.images.size() <= 3
+          && request.resource.data.images.all(image =>
+            image is map
+            && image.keys().hasOnly(['messageId','attachmentId','filename'])
+            && image.messageId is string
+            && image.messageId.size() >= 5
+            && image.messageId.size() <= 30
+            && image.attachmentId is string
+            && image.attachmentId.size() >= 5
+            && image.attachmentId.size() <= 30
+            && image.filename is string
+            && image.filename.size() <= 120
+          )
           && request.resource.data.createdAt == request.time;
 
         allow update, delete: if false;
@@ -42,6 +57,24 @@ service cloud.firestore {
 
           allow update, delete: if false;
         }
+      }
+    }
+
+    // Klassenarbeiten: öffentlich lesbar, neue Einträge nur mit anonymer JDNEXT-Identität.
+    match /classwork/{key} {
+      allow read: if true;
+      allow create, update, delete: if false;
+
+      match /entries/{entryId} {
+        allow read: if true;
+        allow create: if request.auth != null
+          && request.resource.data.keys().hasOnly(['title','createdBy','createdAt'])
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 2
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
       }
     }
 
