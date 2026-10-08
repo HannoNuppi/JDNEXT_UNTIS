@@ -453,7 +453,7 @@ async function loadHomework(){
           sharedHomeworkData[hwKey]=[];
           snap.forEach(d=>{
             const data=d.data()||{};
-            homeworkData[hwKey].push({
+            sharedHomeworkData[hwKey].push({
               id:d.id,
               text:typeof data.text==="string"?data.text:"",
               author:typeof data.author==="string"?data.author:"",
@@ -468,7 +468,9 @@ async function loadHomework(){
         },
         err=>{
           console.error("Homework read failed:",hwKey,err);
-          homeworkData[hwKey]=[];
+          sharedHomeworkData[hwKey]=[];
+          rebuildHomeworkData();
+          renderTimetable();
           done();
         }
       );
