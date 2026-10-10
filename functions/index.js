@@ -32,7 +32,7 @@ async function ensureJdnextSetupDocuments() {
 
   setupDocumentsPromise = (async () => {
     const schemaRef = db.doc("system/schema");
-    const discordRef = db.doc("system/integrations/discord");
+    const discordRef = db.doc("system/discord");
 
     await db.runTransaction(async transaction => {
       const schemaSnap = await transaction.get(schemaRef);
