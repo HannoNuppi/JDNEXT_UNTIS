@@ -684,7 +684,7 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       console.warn("TobiServices-Anmeldung für Münzbonus nicht verfügbar:",authError);
     }
 
-    await createHomeworkCall({
+    const saveResult=await createHomeworkCall({
       hwKey,
       entryId:entry.id,
       text:entry.text,
@@ -702,8 +702,11 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       legacy:false
     });
     rebuildHomeworkData();
-    setSync("● Gespeichert · live für alle sichtbar");
-    return true;
+    const rewardQueued=saveResult.data?.rewardQueued===true;
+    setSync(rewardQueued
+      ? "● Gespeichert · +10 Goldmünzen werden verbucht"
+      : "● Gespeichert · live für alle sichtbar");
+    return {ok:true,rewardQueued};
   }catch(e){
     console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
     setSync(e?.message||"⚠️ Speichern verweigert – Verbindung oder Firebase Functions prüfen");
@@ -942,7 +945,11 @@ function openModal(date,pIdx,subject){
         const ok=await saveHomeworkEntry(hwKey,{id:genId(),text,author},imageRefs);
         saveBtn.disabled=false;
         saveBtn.textContent="Speichern";
-        if(ok){ draw(); renderTimetable(); }
+        if(ok){ 
+          draw();
+          renderTimetable();
+          showToast(ok.rewardQueued ? "✅ Hausaufgabe gespeichert · Münzbonus folgt" : "✅ Hausaufgabe gespeichert");
+        }
       }catch(error){
         console.error(error);
         errEl.textContent=error?.message||"Bild oder Hausaufgabe konnte nicht gespeichert werden.";
