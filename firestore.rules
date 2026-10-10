@@ -93,6 +93,12 @@ service cloud.firestore {
       }
     }
 
+    // Die serverseitige Zuordnung zu einem TobiServices-Konto und der Münzstatus sind privat.
+    // Browser dürfen diese Metadaten weder lesen noch manipulieren.
+    match /homeworkPrivate/{hwKey}/entries/{entryId} {
+      allow read, write: if false;
+    }
+
     // Klassenarbeiten: öffentlich lesbar, neue Einträge nur mit anonymer JDNEXT-Identität.
     match /classwork/{key} {
       allow read: if true;
