@@ -279,7 +279,6 @@ const db = firebase.firestore(oldFirebaseApp);
 const jdFunctions = firebase.functions(oldFirebaseApp, "europe-west1");
 const uploadDiscordImageCall = jdFunctions.httpsCallable("uploadJdnextImage");
 const resolveDiscordImageCall = jdFunctions.httpsCallable("resolveJdnextDiscordImage");
-const createHomeworkCall = jdFunctions.httpsCallable("createJdnextHomework");
 
 const tobiApp = firebase.apps.find(app=>app.options.projectId===TOBI_FIREBASE_CONFIG.projectId)
   || firebase.initializeApp(TOBI_FIREBASE_CONFIG);
@@ -514,7 +513,17 @@ async function ensureTobiProfile(user){
     snap=await ref.get();
   }
   if(!snap.exists) throw new Error("TobiServices-Profil konnte nicht erstellt werden.");
-  return snap.data()||{};
+  let data=snap.data()||{};
+  if(!Object.prototype.hasOwnProperty.call(data,"goldCoins")){
+    try{
+      await ref.update({goldCoins:0});
+      snap=await ref.get();
+      data=snap.data()||{};
+    }catch(error){
+      console.warn("Goldmünzenfeld konnte nicht initialisiert werden:",error);
+    }
+  }
+  return data;
 }
 
 function getClassworkEntries(key){
