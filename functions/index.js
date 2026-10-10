@@ -3,8 +3,10 @@ const { defineSecret } = require("firebase-functions/params");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const { logger } = require("firebase-functions");
 const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
 initializeApp();
+const db = getFirestore();
 
 setGlobalOptions({
   region: "europe-west1",
@@ -20,6 +22,72 @@ const ALLOWED_MIME = new Set([
   "image/webp",
   "image/gif"
 ]);
+
+// Erstellt beim ersten Backend-Aufruf die Schema-Hinweise in Firestore.
+// Der Bot-Token wird bewusst NICHT in Firestore abgelegt.
+let setupDocumentsPromise = null;
+async function ensureJdnextSetupDocuments() {
+  if (setupDocumentsPromise) return setupDocumentsPromise;
+
+  setupDocumentsPromise = (async () => {
+    const schemaRef = db.doc("system/schema");
+    const discordRef = db.doc("system/integrations/discord");
+
+    await db.runTransaction(async transaction => {
+      const schemaSnap = await transaction.get(schemaRef);
+      const discordSnap = await transaction.get(discordRef);
+
+      if (!schemaSnap.exists) {
+        transaction.set(schemaRef, {
+          version: 1,
+          purpose: "JDNEXT Firestore schema reference",
+          createdAt: FieldValue.serverTimestamp(),
+          collections: {
+            homeworkEntries: {
+              documentPath: "homework/{homeworkKey}/entries/{entryId}",
+              fields: {
+                text: "string, 3-1000 characters",
+                author: "string, up to 80 characters",
+                images: "array of up to 3 Discord attachment references",
+                "images[]": {
+                  messageId: "string (Discord message snowflake)",
+                  attachmentId: "string (Discord attachment snowflake)",
+                  filename: "string"
+                },
+                createdAt: "timestamp"
+              }
+            },
+            classworkEntries: {
+              documentPath: "classwork/{homeworkKey}/entries/{entryId}",
+              fields: {
+                title: "string, 2-120 characters",
+                createdBy: "string (Firebase anonymous UID)",
+                createdAt: "timestamp"
+              }
+            }
+          }
+        });
+      }
+
+      if (!discordSnap.exists) {
+        transaction.set(discordRef, {
+          provider: "discord",
+          channelId: DISCORD_CHANNEL_ID,
+          tokenSecretName: "DISCORD_BOT_TOKEN",
+          tokenStorage: "Firebase/Google Cloud Secret Manager",
+          tokenStoredInFirestore: false,
+          instructions: "Set DISCORD_BOT_TOKEN as a Firebase Functions secret; never paste the token into this document.",
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
+    });
+  })().catch(error => {
+    setupDocumentsPromise = null;
+    throw error;
+  });
+
+  return setupDocumentsPromise;
+}
 
 function validateOrigin(request) {
   const origin = String(request.rawRequest?.headers?.origin || "");
@@ -102,6 +170,7 @@ async function discordFetch(path, options = {}) {
 
 exports.uploadJdnextImage = onCall({ secrets: [DISCORD_BOT_TOKEN] }, async (request) => {
   validateOrigin(request);
+  await ensureJdnextSetupDocuments();
 
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Eine anonyme JDNEXT-Sitzung ist für Bild-Uploads erforderlich.");
@@ -151,6 +220,7 @@ exports.uploadJdnextImage = onCall({ secrets: [DISCORD_BOT_TOKEN] }, async (requ
 
 exports.resolveJdnextDiscordImage = onCall({ secrets: [DISCORD_BOT_TOKEN] }, async (request) => {
   validateOrigin(request);
+  await ensureJdnextSetupDocuments();
 
   const messageId = String(request.data?.messageId || "");
   const attachmentId = String(request.data?.attachmentId || "");
