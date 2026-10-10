@@ -765,8 +765,9 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
 
     await tobiDb.runTransaction(async transaction=>{
       const entrySnap=await transaction.get(entryRef);
-      const ownerSnap=await transaction.get(ownerRef);
-      if(entrySnap.exists||ownerSnap.exists) throw new Error("Dieser Hausaufgabeneintrag existiert bereits.");
+      // Private metadata and coin-event documents intentionally cannot be read by clients.
+      // Their create-only rules reject ID reuse without exposing those documents.
+      if(entrySnap.exists) throw new Error("Dieser Hausaufgabeneintrag existiert bereits.");
 
       let authorTobiUid=null;
       let profileRef=null;
@@ -778,8 +779,6 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       }
 
       if(authorTobiUid){
-        const eventSnap=await transaction.get(eventRef);
-        if(eventSnap.exists) throw new Error("Für diesen Eintrag ist bereits ein Münzereignis vorhanden.");
         const before=Number.isSafeInteger(profileSnap.data()?.goldCoins)?profileSnap.data().goldCoins:0;
         const after=before+10;
         if(!Number.isSafeInteger(after)) throw new Error("Der Münzstand ist außerhalb des erlaubten Zahlenbereichs.");
@@ -1064,7 +1063,7 @@ function openModal(date,pIdx,subject){
         if(ok){ 
           draw();
           renderTimetable();
-          showToast(ok.rewardQueued ? "✅ Hausaufgabe gespeichert · Münzbonus folgt" : "✅ Hausaufgabe gespeichert");
+          showToast(ok.rewardQueued ? "✅ Hausaufgabe gespeichert · +10 Goldmünzen" : "✅ Hausaufgabe gespeichert");
         }
       }catch(error){
         console.error(error);
@@ -1138,25 +1137,35 @@ async function removeReportedHomework(hwKey,id){
   const batch=tobiDb.batch();
   if(authorUid){
     const profileRef=tobiDb.collection("users").doc(authorUid);
-    const profileSnap=await profileRef.get();
-    if(!profileSnap.exists) throw new Error("Autorenprofil fehlt; Eintrag bleibt zur Sicherheit bestehen.");
-    const profile=profileSnap.data()||{};
-    const before=Number.isSafeInteger(profile.goldCoins)?profile.goldCoins:0;
-    const after=before-20;
-    if(!Number.isSafeInteger(after)) throw new Error("Der Münzstand ist außerhalb des erlaubten Zahlenbereichs.");
     const eventId="penalty-"+hwKey+"-"+id;
     const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
-    if((await eventRef.get()).exists) throw new Error("Moderationsbuchung existiert bereits; Eintrag bleibt bestehen.");
-    batch.set(eventRef,{
-      uid:authorUid, amount:-20, type:"homework-removal", hwKey, entryId:id,
-      createdAt:firebase.firestore.FieldValue.serverTimestamp()
-    });
-    batch.update(profileRef,{
-      goldCoins:after,
-      lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp(),
-      lastJdnextCoinEventId:eventId,
-      ...(after<=-50?{disabled:true}:{})
-    });
+    const makeRemovalBatch=tryDisable=>{
+      const removalBatch=tobiDb.batch();
+      removalBatch.set(eventRef,{
+        uid:authorUid, amount:-20, type:"homework-removal", hwKey, entryId:id,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+      removalBatch.update(profileRef,{
+        goldCoins:firebase.firestore.FieldValue.increment(-20),
+        lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp(),
+        lastJdnextCoinEventId:eventId,
+        ...(tryDisable?{disabled:true}:{})
+      });
+      removalBatch.delete(entryRef);
+      removalBatch.delete(ownerRef);
+      return removalBatch;
+    };
+    // The reporter cannot read another user's profile. We try an atomic batch
+    // that sets disabled=true; rules accept it only if the new balance is <= -50
+    // (or the account was already disabled). If it is too early, retry without
+    // that flag; the rules only allow this second batch when the threshold isn't hit.
+    try{
+      await makeRemovalBatch(true).commit();
+      return true;
+    }catch(firstError){
+      await makeRemovalBatch(false).commit();
+      return true;
+    }
   }
   batch.delete(entryRef);
   batch.delete(ownerRef);
