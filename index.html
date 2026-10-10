@@ -345,6 +345,7 @@ const discordUrlCache = new Map();
 const LOCAL_KEY = "stundenplan_homework_local";
 let homeworkData = {};
 let sharedHomeworkData = {};
+let olderSharedHomeworkData = {};
 let legacyHomeworkData = {};
 let classworkData = {};
 let sharedReady = true;
@@ -385,12 +386,13 @@ function isNonsense(text){
 /* ---- Alter next-untis-plus Speicher ---- */
 function rebuildHomeworkData(){
   const merged={};
-  const keys=new Set([...Object.keys(sharedHomeworkData),...Object.keys(legacyHomeworkData)]);
+  const keys=new Set([...Object.keys(sharedHomeworkData),...Object.keys(olderSharedHomeworkData),...Object.keys(legacyHomeworkData)]);
   keys.forEach(key=>{
-    const shared=Array.isArray(sharedHomeworkData[key])?sharedHomeworkData[key]:[];
+    const active=Array.isArray(sharedHomeworkData[key])?sharedHomeworkData[key]:[];
+    const older=Array.isArray(olderSharedHomeworkData[key])?olderSharedHomeworkData[key]:[];
     const legacy=Array.isArray(legacyHomeworkData[key])?legacyHomeworkData[key]:[];
     const seen=new Set();
-    merged[key]=[...shared,...legacy].filter(entry=>{
+    merged[key]=[...active,...older,...legacy].filter(entry=>{
       if(!entry?.id || seen.has(entry.id)) return false;
       seen.add(entry.id);
       return true;
@@ -400,9 +402,10 @@ function rebuildHomeworkData(){
 }
 
 function getHomeworkEntries(hwKey){
-  const shared=Array.isArray(sharedHomeworkData[hwKey])?sharedHomeworkData[hwKey]:[];
+  const active=Array.isArray(sharedHomeworkData[hwKey])?sharedHomeworkData[hwKey]:[];
+  const older=Array.isArray(olderSharedHomeworkData[hwKey])?olderSharedHomeworkData[hwKey]:[];
   const legacy=Array.isArray(legacyHomeworkData[hwKey])?legacyHomeworkData[hwKey]:[];
-  return [...shared,...legacy];
+  return [...active,...older,...legacy];
 }
 
 function applyMaintenanceState(enabled,message){
@@ -428,6 +431,7 @@ function startMaintenanceListener(){
         if(enabled){
           resetHomeworkListeners();
           sharedHomeworkData={};
+          olderSharedHomeworkData={};
           legacyHomeworkData={};
           homeworkData={};
           renderAll();
@@ -478,6 +482,39 @@ async function ensureAnonymousAuth(){
     console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
     return null;
   }
+}
+
+// Spark-kompatible Identität für Hausaufgaben und Meldungen.
+// Bestehende TobiServices-Logins werden weiterverwendet; sonst anonym.
+async function ensureTobiAuthForJdnext(){
+  await tobiAuthReady;
+  if(tobiAuth.currentUser) return tobiAuth.currentUser;
+  try{
+    return (await tobiAuth.signInAnonymously()).user;
+  }catch(error){
+    console.error("Anonyme JDNEXT-Anmeldung fehlgeschlagen:",error);
+    return null;
+  }
+}
+
+async function ensureTobiProfile(user){
+  if(!user || user.isAnonymous) return null;
+  const ref=tobiDb.collection("users").doc(user.uid);
+  let snap=await ref.get();
+  if(!snap.exists){
+    await ref.set({
+      email:user.email||"",
+      displayName:user.displayName||"",
+      tags:[],
+      goldCoins:0,
+      authProvider:"firebase-auth",
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+      lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    snap=await ref.get();
+  }
+  if(!snap.exists) throw new Error("TobiServices-Profil konnte nicht erstellt werden.");
+  return snap.data()||{};
 }
 
 function getClassworkEntries(key){
@@ -590,7 +627,7 @@ async function loadHomework(){
     return;
   }
   setSync("Lade Hausaufgaben…");
-  let remaining=keys.length;
+  let remaining=keys.length*2;
   let finished=false;
   return new Promise(resolve=>{
     const done=()=>{
@@ -602,7 +639,7 @@ async function loadHomework(){
       }
     };
     keys.forEach(hwKey=>{
-      const unsub=db.collection("homework").doc(hwKey).collection("entries").onSnapshot(
+      const unsub=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").onSnapshot(
         snap=>{
           sharedHomeworkData[hwKey]=[];
           snap.forEach(d=>{
@@ -611,7 +648,8 @@ async function loadHomework(){
               id:d.id,
               text:typeof data.text==="string"?data.text:"",
               author:typeof data.author==="string"?data.author:"",
-              authorUid:typeof data.authorUid==="string"?data.authorUid:"",
+              authorUid:"",
+              reportCount:Number.isSafeInteger(data.reportCount)?data.reportCount:0,
               createdAt:data.createdAt||null,
               images:Array.isArray(data.images)?data.images:[],
               legacy:false
@@ -622,7 +660,7 @@ async function loadHomework(){
           done();
         },
         err=>{
-          console.error("Homework read failed:",hwKey,err);
+          console.error("TobiServices homework read failed:",hwKey,err);
           sharedHomeworkData[hwKey]=[];
           rebuildHomeworkData();
           renderTimetable();
@@ -630,6 +668,37 @@ async function loadHomework(){
         }
       );
       homeworkUnsubscribes.push(unsub);
+
+      // Bereits vorhandene Einträge im alten Projekt bleiben sichtbar,
+      // sind dort aber schreibgeschützt und nicht über den neuen Reportweg löschbar.
+      const oldUnsub=db.collection("homework").doc(hwKey).collection("entries").onSnapshot(
+        snap=>{
+          olderSharedHomeworkData[hwKey]=[];
+          snap.forEach(d=>{
+            const data=d.data()||{};
+            olderSharedHomeworkData[hwKey].push({
+              id:d.id,
+              text:typeof data.text==="string"?data.text:"",
+              author:typeof data.author==="string"?data.author:"",
+              authorUid:"",
+              createdAt:data.createdAt||null,
+              images:Array.isArray(data.images)?data.images:[],
+              legacy:true
+            });
+          });
+          rebuildHomeworkData();
+          renderTimetable();
+          done();
+        },
+        err=>{
+          console.warn("Older JDNEXT homework read failed:",hwKey,err);
+          olderSharedHomeworkData[hwKey]=[];
+          rebuildHomeworkData();
+          renderTimetable();
+          done();
+        }
+      );
+      homeworkUnsubscribes.push(oldUnsub);
     });
   });
 }
@@ -671,26 +740,64 @@ async function loadLegacyHomework(){
 }
 
 async function saveHomeworkEntry(hwKey,entry,images=[]){
-  // Posting stays free of a TobiServices account; a login only grants the +10 reward.
   setSync("Speichert…");
   try{
-    await ensureAnonymousAuth();
-    let tobiIdToken=null;
-    try{
-      await tobiAuthReady;
-      const signedInUser=tobiAuth.currentUser||activeTobiUser;
-      if(signedInUser) tobiIdToken=await signedInUser.getIdToken();
-    }catch(authError){
-      console.warn("TobiServices-Anmeldung für Münzbonus nicht verfügbar:",authError);
-    }
+    const user=await ensureTobiAuthForJdnext();
+    if(!user) throw new Error("JDNEXT konnte keine Verbindung herstellen.");
+    let profile=null;
+    if(!user.isAnonymous) profile=await ensureTobiProfile(user);
 
-    const saveResult=await createHomeworkCall({
-      hwKey,
-      entryId:entry.id,
-      text:entry.text,
-      author:entry.author,
-      images:Array.isArray(images)?images.slice(0,3):[],
-      tobiIdToken
+    const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(entry.id);
+    const ownerRef=tobiDb.collection("jdnextHomeworkPrivate").doc(hwKey).collection("entries").doc(entry.id);
+    const eventId="reward-"+hwKey+"-"+entry.id;
+    const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
+    const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
+    let rewardApplied=false;
+
+    await tobiDb.runTransaction(async transaction=>{
+      const entrySnap=await transaction.get(entryRef);
+      const ownerSnap=await transaction.get(ownerRef);
+      if(entrySnap.exists||ownerSnap.exists) throw new Error("Dieser Hausaufgabeneintrag existiert bereits.");
+
+      let authorTobiUid=null;
+      let profileRef=null;
+      let profileSnap=null;
+      if(!user.isAnonymous && profile?.disabled!==true){
+        profileRef=tobiDb.collection("users").doc(user.uid);
+        profileSnap=await transaction.get(profileRef);
+        if(profileSnap.exists && profileSnap.data()?.disabled!==true) authorTobiUid=user.uid;
+      }
+
+      if(authorTobiUid){
+        const eventSnap=await transaction.get(eventRef);
+        if(eventSnap.exists) throw new Error("Für diesen Eintrag ist bereits ein Münzereignis vorhanden.");
+        const before=Number.isSafeInteger(profileSnap.data()?.goldCoins)?profileSnap.data().goldCoins:0;
+        const after=before+10;
+        if(!Number.isSafeInteger(after)) throw new Error("Der Münzstand ist außerhalb des erlaubten Zahlenbereichs.");
+        transaction.update(profileRef,{
+          goldCoins:after,
+          lastProfileChangeAt:stamp(),
+          lastJdnextCoinEventId:eventId
+        });
+        transaction.set(eventRef,{
+          uid:user.uid, amount:10, type:"homework-post", hwKey, entryId:entry.id,
+          createdAt:stamp()
+        });
+        rewardApplied=true;
+      }
+
+      transaction.set(entryRef,{
+        text:entry.text,
+        author:entry.author,
+        images:Array.isArray(images)?images.slice(0,3):[],
+        reportCount:0,
+        createdAt:stamp()
+      });
+      transaction.set(ownerRef,{
+        authorAuthUid:user.uid,
+        authorTobiUid:authorTobiUid,
+        createdAt:stamp()
+      });
     });
 
     if(!sharedHomeworkData[hwKey]) sharedHomeworkData[hwKey]=[];
@@ -698,18 +805,18 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       ...entry,
       images:Array.isArray(images)?images.slice(0,3):[],
       authorUid:"",
+      reportCount:0,
       createdAt:null,
       legacy:false
     });
     rebuildHomeworkData();
-    const rewardQueued=saveResult.data?.rewardQueued===true;
-    setSync(rewardQueued
-      ? "● Gespeichert · +10 Goldmünzen werden verbucht"
+    setSync(rewardApplied
+      ? "● Gespeichert · +10 Goldmünzen gutgeschrieben"
       : "● Gespeichert · live für alle sichtbar");
-    return {ok:true,rewardQueued};
+    return {ok:true,rewardQueued:rewardApplied};
   }catch(e){
     console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
-    setSync(e?.message||"⚠️ Speichern verweigert – Verbindung oder Firebase Functions prüfen");
+    setSync(e?.message||"⚠️ Speichern verweigert – Regeln oder Verbindung prüfen");
     return false;
   }
 }
@@ -1009,26 +1116,83 @@ function markReported(id){
   }catch(e){}
 }
 
+async function removeReportedHomework(hwKey,id){
+  const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(id);
+  const ownerRef=tobiDb.collection("jdnextHomeworkPrivate").doc(hwKey).collection("entries").doc(id);
+  const entrySnap=await entryRef.get();
+  if(!entrySnap.exists || Number(entrySnap.data()?.reportCount||0)<2) return false;
+  const ownerSnap=await ownerRef.get();
+  if(!ownerSnap.exists) throw new Error("Private Autorzuordnung fehlt; Eintrag bleibt bestehen.");
+
+  const owner=ownerSnap.data()||{};
+  const authorUid=typeof owner.authorTobiUid==="string" ? owner.authorTobiUid : "";
+  const batch=tobiDb.batch();
+  if(authorUid){
+    const profileRef=tobiDb.collection("users").doc(authorUid);
+    const profileSnap=await profileRef.get();
+    if(!profileSnap.exists) throw new Error("Autorenprofil fehlt; Eintrag bleibt zur Sicherheit bestehen.");
+    const profile=profileSnap.data()||{};
+    const before=Number.isSafeInteger(profile.goldCoins)?profile.goldCoins:0;
+    const after=before-20;
+    if(!Number.isSafeInteger(after)) throw new Error("Der Münzstand ist außerhalb des erlaubten Zahlenbereichs.");
+    const eventId="penalty-"+hwKey+"-"+id;
+    const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
+    if((await eventRef.get()).exists) throw new Error("Moderationsbuchung existiert bereits; Eintrag bleibt bestehen.");
+    batch.set(eventRef,{
+      uid:authorUid, amount:-20, type:"homework-removal", hwKey, entryId:id,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    batch.update(profileRef,{
+      goldCoins:after,
+      lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp(),
+      lastJdnextCoinEventId:eventId,
+      ...(after<=-50?{disabled:true}:{})
+    });
+  }
+  batch.delete(entryRef);
+  batch.delete(ownerRef);
+  await batch.commit();
+  return true;
+}
+
 async function reportEntry(hwKey,id,redraw){
   if(wasReported(id)) return;
-  const user=await ensureAnonymousAuth();
+  const user=await ensureTobiAuthForJdnext();
   if(!user){
     showToast("⚠️ Meldungen sind momentan nicht verfügbar");
     return;
   }
   const entry=getHomeworkEntries(hwKey).find(e=>e.id===id);
   if(!entry || entry.legacy) return;
+  const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(id);
+  const reportRef=entryRef.collection("reports").doc(user.uid);
   try{
-    await db.collection("homework").doc(hwKey).collection("entries").doc(id)
-      .collection("reports").doc(user.uid).set({
-        createdAt:firebase.firestore.FieldValue.serverTimestamp()
-      });
+    const nextCount=await tobiDb.runTransaction(async transaction=>{
+      const entrySnap=await transaction.get(entryRef);
+      const reportSnap=await transaction.get(reportRef);
+      if(!entrySnap.exists) throw new Error("Der Eintrag wurde bereits entfernt.");
+      if(reportSnap.exists) throw new Error("already-reported");
+      const current=Number.isSafeInteger(entrySnap.data()?.reportCount)?entrySnap.data().reportCount:0;
+      transaction.set(reportRef,{createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+      transaction.update(entryRef,{reportCount:current+1});
+      return current+1;
+    });
     markReported(id);
-    showToast("🚩 Meldung gespeichert");
+    if(nextCount>=2){
+      try{
+        const removed=await removeReportedHomework(hwKey,id);
+        showToast(removed?"🚩 Zwei Meldungen: Eintrag entfernt":"🚩 Meldung gespeichert");
+      }catch(removalError){
+        console.error("Moderation failed:",removalError);
+        showToast("🚩 Meldung gespeichert; Entfernung konnte nicht abgeschlossen werden");
+      }
+    }else{
+      showToast("🚩 Meldung gespeichert");
+    }
     redraw();
   }catch(e){
     const msg=String(e&&e.message||"").toLowerCase();
-    if(e && (e.code==="already-exists" || e.code===6 || msg.includes("already exists"))){
+    if(msg.includes("already-reported") || e?.code==="already-exists" || e?.code===6){
       markReported(id);
       showToast("🚩 Diesen Eintrag hast du bereits gemeldet");
       redraw();
@@ -1070,7 +1234,7 @@ function updateTobiLoginButton(){
 }
 
 tobiAuth.onAuthStateChanged(async user=>{
-  activeTobiUser=user;
+  activeTobiUser=user&&!user.isAnonymous?user:null;
   activeTobiProfile=null;
   if(tobiProfileUnsubscribe){try{tobiProfileUnsubscribe();}catch{} tobiProfileUnsubscribe=null;}
   if(!tobiAuthInitialized){
@@ -1078,12 +1242,12 @@ tobiAuth.onAuthStateChanged(async user=>{
     resolveTobiAuthReady(user);
   }
   updateTobiLoginButton();
-  if(!user) return;
+  if(!user||user.isAnonymous) return;
 
   tobiProfileUnsubscribe=tobiDb.collection("users").doc(user.uid).onSnapshot(snapshot=>{
     activeTobiProfile=snapshot.exists?(snapshot.data()||{}):null;
     if(activeTobiProfile?.disabled===true){
-      showToast("⚠️ Dein TobiServices-Konto ist gesperrt.");
+      showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
     }
     updateTobiLoginButton();
   },error=>console.warn("TobiServices-Guthaben konnte nicht geladen werden:",error));
@@ -1165,6 +1329,7 @@ function renderAll(){
 function reloadWeekData(){
   resetHomeworkListeners();
   sharedHomeworkData={};
+  olderSharedHomeworkData={};
   legacyHomeworkData={};
   classworkData={};
   homeworkData={};
