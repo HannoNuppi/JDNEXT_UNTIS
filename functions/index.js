@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const { onInit } = require("firebase-functions/v2/core");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
@@ -15,6 +16,8 @@ setGlobalOptions({
 });
 
 const DISCORD_BOT_TOKEN = defineSecret("DISCORD_BOT_TOKEN");
+const TOBI_REWARD_SECRET = defineSecret("TOBI_REWARD_SECRET");
+const TOBI_REWARD_URL = "https://europe-west1-tobiservices.cloudfunctions.net/jdnextCoinEvent";
 const DISCORD_CHANNEL_ID = "1557736296795865108";
 const MAX_IMAGE_BYTES = 7 * 1024 * 1024;
 const ALLOWED_MIME = new Set([
@@ -258,4 +261,155 @@ exports.resolveJdnextDiscordImage = onCall({ secrets: [DISCORD_BOT_TOKEN] }, asy
     ok: true,
     url: attachment.url
   };
+});
+
+
+// Server-to-server bridge into the shared TobiServices wallet. The shared secret is
+// stored only in Firebase Secret Manager, never in client JavaScript or Firestore.
+async function callTobiCoinService(payload) {
+  const response = await fetch(TOBI_REWARD_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-jdnext-secret": TOBI_REWARD_SECRET.value()
+    },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok !== true) {
+    throw new Error(result.error || `TobiServices coin endpoint failed (${response.status})`);
+  }
+  return result;
+}
+
+function validateHomeworkImages(images) {
+  if (!Array.isArray(images) || images.length > 3) {
+    throw new HttpsError("invalid-argument", "Es sind höchstens drei Bilder erlaubt.");
+  }
+  for (const image of images) {
+    if (!image || typeof image !== "object" ||
+        !/^\d{15,25}$/.test(String(image.messageId || "")) ||
+        !/^\d{15,25}$/.test(String(image.attachmentId || "")) ||
+        typeof image.filename !== "string" || image.filename.length > 120) {
+      throw new HttpsError("invalid-argument", "Ein Bildverweis ist ungültig.");
+    }
+  }
+}
+
+exports.createJdnextHomework = onCall({ secrets: [TOBI_REWARD_SECRET] }, async (request) => {
+  validateOrigin(request);
+  await ensureJdnextSetupDocuments();
+  if (!request.auth?.uid) {
+    throw new HttpsError("unauthenticated", "Die anonyme JDNEXT-Sitzung ist nicht verfügbar.");
+  }
+
+  const hwKey = String(request.data?.hwKey || "");
+  const entryId = String(request.data?.entryId || "");
+  const text = String(request.data?.text || "").trim();
+  const author = String(request.data?.author || "").trim().slice(0, 80);
+  const images = Array.isArray(request.data?.images) ? request.data.images : [];
+
+  if (!/^\d{4}-\d{2}-\d{2}_\d{1,2}$/.test(hwKey) ||
+      !/^[A-Za-z0-9_-]{8,80}$/.test(entryId)) {
+    throw new HttpsError("invalid-argument", "Stundenplan-Slot oder Eintrags-ID ist ungültig.");
+  }
+  if (text.length < 3 || text.length > 1000) {
+    throw new HttpsError("invalid-argument", "Die Hausaufgabe muss 3 bis 1000 Zeichen lang sein.");
+  }
+  validateHomeworkImages(images);
+
+  let authorTobiUid = "";
+  const tobiIdToken = typeof request.data?.tobiIdToken === "string"
+    ? request.data.tobiIdToken.slice(0, 10000)
+    : "";
+
+  // Invalid/missing Tobi login must never block a normal homework post.
+  if (tobiIdToken) {
+    try {
+      const verified = await callTobiCoinService({ action: "verify", idToken: tobiIdToken });
+      authorTobiUid = String(verified.uid || "");
+    } catch (error) {
+      logger.warn("TobiServices session could not be verified for the optional homework reward.", {
+        message: String(error?.message || error)
+      });
+    }
+  }
+
+  const entryRef = db.doc(`homework/${hwKey}/entries/${entryId}`);
+  try {
+    await entryRef.create({
+      text,
+      author,
+      images: images.slice(0, 3),
+      createdAt: FieldValue.serverTimestamp()
+    });
+  } catch (error) {
+    if (String(error.code || "").includes("already-exists") || String(error.code || "") === "6") {
+      throw new HttpsError("already-exists", "Dieser Hausaufgabeneintrag existiert bereits.");
+    }
+    throw error;
+  }
+
+  if (authorTobiUid) {
+    await db.doc(`homeworkPrivate/${hwKey}/entries/${entryId}`).create({
+      authorTobiUid,
+      rewardStatus: "pending",
+      createdAt: FieldValue.serverTimestamp()
+    });
+  }
+
+  return { ok: true, rewardQueued: Boolean(authorTobiUid) };
+});
+
+exports.rewardJdnextHomeworkAuthor = onDocumentCreated({
+  document: "homeworkPrivate/{hwKey}/entries/{entryId}",
+  retry: true,
+  secrets: [TOBI_REWARD_SECRET]
+}, async (event) => {
+  const data = event.data?.data();
+  if (!data?.authorTobiUid || data.rewardStatus === "done") return;
+  const { hwKey, entryId } = event.params;
+
+  await callTobiCoinService({
+    action: "reward-post",
+    uid: String(data.authorTobiUid),
+    eventId: `post-${hwKey}-${entryId}`
+  });
+  await event.data.ref.set({
+    rewardStatus: "done",
+    rewardedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+});
+
+exports.removeReportedJdnextHomework = onDocumentCreated({
+  document: "homework/{hwKey}/entries/{entryId}/reports/{reportUid}",
+  retry: true,
+  secrets: [TOBI_REWARD_SECRET]
+}, async (event) => {
+  const { hwKey, entryId } = event.params;
+  const entryRef = db.doc(`homework/${hwKey}/entries/${entryId}`);
+  const entrySnap = await entryRef.get();
+  if (!entrySnap.exists) return;
+
+  const reportsSnap = await entryRef.collection("reports").get();
+  if (reportsSnap.size < 2) return;
+
+  const privateRef = db.doc(`homeworkPrivate/${hwKey}/entries/${entryId}`);
+  const privateSnap = await privateRef.get();
+  const privateData = privateSnap.exists ? (privateSnap.data() || {}) : {};
+  const authorTobiUid = String(privateData.authorTobiUid || "");
+
+  if (authorTobiUid && privateData.penaltyApplied !== true) {
+    await callTobiCoinService({
+      action: "penalty",
+      uid: authorTobiUid,
+      eventId: `penalty-${hwKey}-${entryId}`
+    });
+    await privateRef.set({
+      penaltyApplied: true,
+      penaltyAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+
+  await entryRef.delete();
 });
