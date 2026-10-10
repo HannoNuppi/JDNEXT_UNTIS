@@ -4,11 +4,11 @@ A/B-Wochen-Stundenplan mit gemeinsamen Hausaufgaben als PWA.
 
 ## Hausaufgaben
 
-JDNEXT verwendet weiterhin das ursprüngliche Firebase-Projekt **next-untis-plus**.
+Der Stundenplan, Klassenarbeiten und alte Daten bleiben im ursprünglichen Firebase-Projekt **`next-untis-plus`**. Neue Hausaufgaben und Meldungen werden im **TobiServices-Firestore-Projekt `tobiservices`** gespeichert, damit Firestore Rules Post, Report und gemeinsames Guthaben in atomaren Transaktionen prüfen können.
 
-Hausaufgaben sind **öffentlich lesbar**. Dafür ist kein TobiServices-Konto notwendig.
+Hausaufgaben sind öffentlich lesbar. Posten und melden geht auch ohne TobiServices-Konto; dafür verwendet JDNEXT eine anonyme Firebase-Identität im TobiServices-Projekt. Ein angemeldeter, nicht gesperrter TobiServices-Account erhält bei einem neuen Eintrag `+10` Goldmünzen. Nach zwei Meldungen von unterschiedlichen Firebase-Identitäten wird der Eintrag entfernt und für einen zugeordneten TobiServices-Autor werden `20` Goldmünzen abgezogen.
 
-Neue Einträge werden als einzelne, unveränderliche Firestore-Dokumente gespeichert. Die Website verwendet dafür automatisch eine anonyme Firebase-Authentifizierung im Hintergrund. Ein TobiServices-Konto ist dafür nicht erforderlich.
+Schon vorhandene Einträge im alten Projekt bleiben sichtbar, sind aber aus Kompatibilitätsgründen schreibgeschützt. Neue Einträge werden im TobiServices-Projekt angelegt.
 
 ## TobiServices Account
 
@@ -16,20 +16,17 @@ Der Button „TobiServices Account“ öffnet optional das zentrale Account Cent
 
 https://hannonuppi.github.io/Tobiservices-Account/
 
-Wichtig: Die beiden Firebase-Projekte bleiben getrennt. Der TobiServices-Account wird nicht benötigt, um den Stundenplan oder öffentliche Hausaufgaben zu benutzen.
+Ein TobiServices-Konto ist nicht erforderlich, um den Stundenplan oder öffentliche Hausaufgaben anzusehen, zu posten oder zu melden.
 
 ## Sicherheit
 
-- öffentliche Leserechte für Hausaufgaben
-- keine öffentlichen Update-/Delete-Rechte
-- serverseitige Feld- und Längenvalidierung
-- Ersteller-UID wird durch Firestore Rules geprüft
-- einzelne Einträge statt gemeinsam überschreibbarer Arrays
-- Reports können pro Firebase-Identität nur einmal angelegt werden
-- sensible Report-Daten sind nicht öffentlich lesbar
-- alles außerhalb der Hausaufgaben ist standardmäßig geschlossen
+- Firestore Rules erlauben Bonusbuchungen nur zusammen mit einem neuen Homework-Dokument.
+- Pro Firebase-Identität ist höchstens eine Meldung pro Eintrag erlaubt; der Zähler muss atomar zusammen mit einer neuen Meldung steigen.
+- Entfernen nach zwei Meldungen und die `−20`-Buchung müssen als derselbe Rules-geprüfte Commit erfolgen.
+- Autorzuordnungen und Münzereignisse sind für Browser nicht lesbar, manipulierbar oder löschbar.
+- Der TobiServices-Saldo wird nicht frei vom Client beschreibbar; nur der eng geprüfte Post-/Moderationsablauf oder Admins können ihn ändern.
 
-Die Rules aus `firestore.rules` müssen im Firebase-Projekt `next-untis-plus` veröffentlicht werden.
+Für neue Hausaufgaben und Münzen müssen die Regeln aus `Tobiservices-Account/firestore.rules` im Firebase-Projekt `tobiservices` veröffentlicht werden. In Authentication → Sign-in method muss dort **Anonym** aktiviert sein. Die bestehenden Regeln aus diesem Repository bleiben für alte Hausaufgaben und Klassenarbeiten im Projekt `next-untis-plus` erforderlich.
 
 ## GitHub Pages / PWA
 
