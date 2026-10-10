@@ -6,7 +6,7 @@ Beim ersten Start der JDNEXT-Cloud-Functions-Runtime legt das Backend die Schema
 
 Schema-Hinweis für Daten, die JDNEXT verwendet. Das Backend erstellt ihn automatisch.
 
-### Hausaufgaben: `homework/{homeworkKey}/entries/{entryId}`
+### Bestehende Hausaufgaben (Legacy): `homework/{homeworkKey}/entries/{entryId}`
 
 ```json
 {
@@ -24,6 +24,8 @@ Schema-Hinweis für Daten, die JDNEXT verwendet. Das Backend erstellt ihn automa
 ```
 
 Ohne Bild ist `images` eine leere Liste: `[]`. Die IDs und der Dateiname werden nach dem Discord-Upload gespeichert; nicht die Bilddatei und nicht die kurzlebige CDN-URL.
+
+Diese Pfade bleiben im Projekt `next-untis-plus` für bereits gespeicherte Einträge lesbar. Neue Hausaufgaben werden jetzt unter `tobiservices/jdnextHomework/{homeworkKey}/entries/{entryId}` abgelegt; Details stehen in Abschnitt 4.
 
 ### Klassenarbeiten: `classwork/{homeworkKey}/entries/{entryId}`
 
