@@ -36,6 +36,12 @@ Die Rules aus `firestore.rules` müssen im Firebase-Projekt `next-untis-plus` ve
 Die App kann direkt über GitHub Pages betrieben und als PWA installiert werden.
 
 
+## Erstinitialisierung der Firestore-Datenstruktur
+
+Das JDNEXT-Backend legt beim ersten Aufruf der Discord-Upload-/CDN-Funktion automatisch die Schema-Referenz `system/schema` und den Integrationshinweis `system/integrations/discord` an. Diese Dokumente beschreiben das Eintragformat, legen aber keine leeren Hausaufgaben- oder Klassenarbeits-Collections an: Firestore-Collections entstehen automatisch mit den ersten echten Dokumenten.
+
+Siehe [FIREBASE_SCHEMA.md](FIREBASE_SCHEMA.md) für konkrete Feldformate.
+
 ## Discord-Bilder
 
 Bilder für Hausaufgaben werden nicht in GitHub oder Firebase Storage gespeichert. JDNEXT lädt sie über eine geschützte Cloud Function mit einem Discord-Bot in den Kanal `1557736296795865108`. In Firestore werden nur Discord-Nachrichten-/Attachment-IDs gespeichert. Beim Anzeigen wird daraus serverseitig eine aktuelle Discord-CDN-URL geholt.
