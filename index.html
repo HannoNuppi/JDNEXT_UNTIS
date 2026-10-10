@@ -62,6 +62,11 @@
     background:linear-gradient(90deg,var(--gold),var(--pink)); border:none; border-radius:999px;
     padding:9px 18px; box-shadow:0 0 14px rgba(255,204,77,.4);
   }
+  .themebtn{
+    border:1px solid rgba(51,240,224,.45); color:var(--cyan); background:rgba(51,240,224,.08);
+    border-radius:999px; padding:8px 12px; font:700 12px 'Baloo 2'; cursor:pointer;
+  }
+  .themebtn:hover{background:rgba(51,240,224,.16);}
 
   .weeknav{
     display:flex; align-items:center; justify-content:space-between; gap:10px;
@@ -212,6 +217,7 @@
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
+      <button class="themebtn" id="themeBtn" type="button">🎨 Themes</button>
       <button class="loginbtn" id="loginBtn">TobiServices Account</button>
     </div>
   </div>
@@ -253,16 +259,6 @@ const OLD_FIREBASE_CONFIG = Object.freeze({
   measurementId: "G-VD8CKYNT8C"
 });
 
-if(!firebase.apps.length){
-  firebase.initializeApp(OLD_FIREBASE_CONFIG);
-}
-const oldFirebaseApp = firebase.app();
-const oldAuth = firebase.auth();
-const db = firebase.firestore();
-const jdFunctions = firebase.functions(oldFirebaseApp, "europe-west1");
-const uploadDiscordImageCall = jdFunctions.httpsCallable("uploadJdnextImage");
-const resolveDiscordImageCall = jdFunctions.httpsCallable("resolveJdnextDiscordImage");
-
 const TOBI_FIREBASE_CONFIG = Object.freeze({
   apiKey: "AIzaSyCwVh8-JIm-pj8N8bOWgwz8-G_cLQ6AVuQ",
   authDomain: "tobiservices.firebaseapp.com",
@@ -272,10 +268,30 @@ const TOBI_FIREBASE_CONFIG = Object.freeze({
   appId: "1:552906640909:web:99f583a0f4145e96ee8f44",
   measurementId: "G-9LKPHE93S1"
 });
-const tobiApp = firebase.apps.some(app=>app.name==="JDNEXT_TobiServices")
-  ? firebase.app("JDNEXT_TobiServices")
-  : firebase.initializeApp(TOBI_FIREBASE_CONFIG,"JDNEXT_TobiServices");
+
+// TobiServices bleibt die Default-App, damit die bestehende Anmeldung des Account Centers
+// auf derselben GitHub-Pages-Origin auch in JDNEXT erkannt wird. JDNEXTs Daten bleiben
+// ausdrücklich an die benannte alte App gebunden.
+const oldFirebaseApp = firebase.apps.find(app=>app.options.projectId===OLD_FIREBASE_CONFIG.projectId)
+  || firebase.initializeApp(OLD_FIREBASE_CONFIG,"JDNEXT_Old");
+const oldAuth = firebase.auth(oldFirebaseApp);
+const db = firebase.firestore(oldFirebaseApp);
+const jdFunctions = firebase.functions(oldFirebaseApp, "europe-west1");
+const uploadDiscordImageCall = jdFunctions.httpsCallable("uploadJdnextImage");
+const resolveDiscordImageCall = jdFunctions.httpsCallable("resolveJdnextDiscordImage");
+const createHomeworkCall = jdFunctions.httpsCallable("createJdnextHomework");
+
+const tobiApp = firebase.apps.find(app=>app.options.projectId===TOBI_FIREBASE_CONFIG.projectId)
+  || firebase.initializeApp(TOBI_FIREBASE_CONFIG);
+const tobiAuth = firebase.auth(tobiApp);
 const tobiDb = firebase.firestore(tobiApp);
+
+let activeTobiUser = null;
+let activeTobiProfile = null;
+let tobiProfileUnsubscribe = null;
+let resolveTobiAuthReady;
+let tobiAuthInitialized = false;
+const tobiAuthReady = new Promise(resolve=>{ resolveTobiAuthReady=resolve; });
 
 const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.html";
 
@@ -655,15 +671,28 @@ async function loadLegacyHomework(){
 }
 
 async function saveHomeworkEntry(hwKey,entry,images=[]){
-  // Posten ist absichtlich ohne TobiServices-Account möglich.
+  // Posting stays free of a TobiServices account; a login only grants the +10 reward.
   setSync("Speichert…");
   try{
-    await db.collection("homework").doc(hwKey).collection("entries").doc(entry.id).set({
+    await ensureAnonymousAuth();
+    let tobiIdToken=null;
+    try{
+      await tobiAuthReady;
+      const signedInUser=tobiAuth.currentUser||activeTobiUser;
+      if(signedInUser) tobiIdToken=await signedInUser.getIdToken();
+    }catch(authError){
+      console.warn("TobiServices-Anmeldung für Münzbonus nicht verfügbar:",authError);
+    }
+
+    await createHomeworkCall({
+      hwKey,
+      entryId:entry.id,
       text:entry.text,
       author:entry.author,
       images:Array.isArray(images)?images.slice(0,3):[],
-      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      tobiIdToken
     });
+
     if(!sharedHomeworkData[hwKey]) sharedHomeworkData[hwKey]=[];
     sharedHomeworkData[hwKey].push({
       ...entry,
@@ -677,7 +706,7 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
     return true;
   }catch(e){
     console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
-    setSync("⚠️ Speichern verweigert – Firebase Rules prüfen");
+    setSync(e?.message||"⚠️ Speichern verweigert – Verbindung oder Firebase Functions prüfen");
     return false;
   }
 }
@@ -1018,6 +1047,66 @@ function showToast(msg){
 document.getElementById("loginBtn").onclick=()=>{
   location.href=ACCOUNT_URL;
 };
+
+function updateTobiLoginButton(){
+  const button=document.getElementById("loginBtn");
+  if(!button) return;
+  if(activeTobiUser){
+    const name=activeTobiProfile?.displayName||activeTobiUser.displayName||activeTobiUser.email||"Angemeldet";
+    const coins=Number.isSafeInteger(activeTobiProfile?.goldCoins)?activeTobiProfile.goldCoins:0;
+    button.textContent=`✦ ${coins.toLocaleString("de-DE")} Gold`;
+    button.title=`${name} · TobiServices Account öffnen`;
+  }else{
+    button.textContent="TobiServices Account";
+    button.title="Anmelden oder dein gemeinsames Goldguthaben ansehen";
+  }
+}
+
+tobiAuth.onAuthStateChanged(async user=>{
+  activeTobiUser=user;
+  activeTobiProfile=null;
+  if(tobiProfileUnsubscribe){try{tobiProfileUnsubscribe();}catch{} tobiProfileUnsubscribe=null;}
+  if(!tobiAuthInitialized){
+    tobiAuthInitialized=true;
+    resolveTobiAuthReady(user);
+  }
+  updateTobiLoginButton();
+  if(!user) return;
+
+  tobiProfileUnsubscribe=tobiDb.collection("users").doc(user.uid).onSnapshot(snapshot=>{
+    activeTobiProfile=snapshot.exists?(snapshot.data()||{}):null;
+    if(activeTobiProfile?.disabled===true){
+      showToast("⚠️ Dein TobiServices-Konto ist gesperrt.");
+    }
+    updateTobiLoginButton();
+  },error=>console.warn("TobiServices-Guthaben konnte nicht geladen werden:",error));
+});
+
+function openThemeMenu(){
+  const overlay=document.getElementById("overlay");
+  const modal=document.getElementById("modal");
+  const equipped=localStorage.getItem("jdnextTheme")||"Next";
+  modal.innerHTML=`
+    <button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>
+    <h2>🎨 Themes</h2>
+    <div class="msub">Dein Look und dein Inventar</div>
+    <div class="classwork-section" style="margin-top:12px">
+      <div class="classwork-head"><h3>Inventar · 1 Theme</h3><span style="color:var(--cyan);font-size:11px">Besessen</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div><strong style="font-family:'Baloo 2';color:var(--gold)">✨ Next</strong><div class="classwork-meta">Das originale JDNEXT-Design</div></div>
+        <button class="classwork-save" id="equipNext" type="button" style="width:auto;padding:0 10px;font-size:10px">${equipped==="Next"?"Ausgerüstet":"Ausrüsten"}</button>
+      </div>
+    </div>
+    <p class="classwork-meta">Weitere Themes können später hier ins Inventar kommen.</p>`;
+  modal.querySelector("#closeModal").onclick=closeModal;
+  modal.querySelector("#equipNext").onclick=()=>{
+    localStorage.setItem("jdnextTheme","Next");
+    modal.querySelector("#equipNext").textContent="Ausgerüstet";
+    showToast("✨ Next-Theme ausgerüstet");
+  };
+  overlay.classList.add("show");
+}
+document.getElementById("themeBtn").onclick=openThemeMenu;
 
 // ---- PWA / App-Installation ----
 let deferredInstallPrompt = null;
