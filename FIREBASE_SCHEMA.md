@@ -1,6 +1,6 @@
 # Firebase-Datenstruktur – JDNEXT
 
-Diese Struktur wird vom JDNEXT-Backend beim ersten Aufruf der Discord-Upload-/CDN-Funktion vorbereitet. Firestore ist schemafrei und erstellt Collections erst zusammen mit echten Dokumenten.
+Beim ersten Start der JDNEXT-Cloud-Functions-Runtime legt das Backend die Schema-Hinweise automatisch an. Firestore ist schemafrei und erstellt Collections erst zusammen mit echten Dokumenten.
 
 ## 1. `system/schema`
 
@@ -37,9 +37,9 @@ Ohne Bild ist `images` eine leere Liste: `[]`. Die IDs und der Dateiname werden 
 
 Diese Einträge werden durch die Website erzeugt; leere Collections müssen nicht manuell angelegt werden.
 
-## 2. `system/integrations/discord`
+## 2. `system/discord`
 
-Das Backend erstellt einen Metadatensatz mit Kanal-ID und Secret-Namen. **Er enthält absichtlich keinen Bot-Token.** Das Feld `tokenStoredInFirestore` ist `false).
+Das Backend erstellt unter `system/discord` einen Metadatensatz mit Kanal-ID und Secret-Namen. **Er enthält absichtlich keinen Bot-Token.** Das Feld `tokenStoredInFirestore` ist `false`.
 
 ## 3. Discord-Bot-Token: nicht in Firestore
 
