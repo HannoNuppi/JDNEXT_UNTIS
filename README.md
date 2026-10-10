@@ -38,7 +38,7 @@ Die App kann direkt über GitHub Pages betrieben und als PWA installiert werden.
 
 ## Erstinitialisierung der Firestore-Datenstruktur
 
-Das JDNEXT-Backend legt beim ersten Aufruf der Discord-Upload-/CDN-Funktion automatisch die Schema-Referenz `system/schema` und den Integrationshinweis `system/integrations/discord` an. Diese Dokumente beschreiben das Eintragformat, legen aber keine leeren Hausaufgaben- oder Klassenarbeits-Collections an: Firestore-Collections entstehen automatisch mit den ersten echten Dokumenten.
+Beim ersten Start der JDNEXT-Cloud-Functions-Runtime legt das Backend automatisch die Schema-Referenz `system/schema` und den Integrationshinweis `system/integrations/discord` an. Diese Dokumente beschreiben das Eintragformat, legen aber keine leeren Hausaufgaben- oder Klassenarbeits-Collections an: Firestore-Collections entstehen automatisch mit den ersten echten Dokumenten.
 
 Siehe [FIREBASE_SCHEMA.md](FIREBASE_SCHEMA.md) für konkrete Feldformate.
 
