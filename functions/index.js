@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
+const { onInit } = require("firebase-functions/v2/core");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const { logger } = require("firebase-functions");
 const { initializeApp } = require("firebase-admin/app");
@@ -88,6 +89,11 @@ async function ensureJdnextSetupDocuments() {
 
   return setupDocumentsPromise;
 }
+
+// Erstinitialisierung nach dem Start der Cloud-Functions-Runtime.
+onInit(async () => {
+  await ensureJdnextSetupDocuments();
+});
 
 function validateOrigin(request) {
   const origin = String(request.rawRequest?.headers?.origin || "");
