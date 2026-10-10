@@ -772,10 +772,15 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       let authorTobiUid=null;
       let profileRef=null;
       let profileSnap=null;
-      if(!user.isAnonymous && profile?.disabled!==true){
+      if(!user.isAnonymous && profile?.disabled!==true &&
+         (Number.isSafeInteger(profile?.goldCoins)?profile.goldCoins:0)>-50){
         profileRef=tobiDb.collection("users").doc(user.uid);
         profileSnap=await transaction.get(profileRef);
-        if(profileSnap.exists && profileSnap.data()?.disabled!==true) authorTobiUid=user.uid;
+        if(profileSnap.exists &&
+           profileSnap.data()?.disabled!==true &&
+           (Number.isSafeInteger(profileSnap.data()?.goldCoins)?profileSnap.data().goldCoins:0)>-50){
+          authorTobiUid=user.uid;
+        }
       }
 
       if(authorTobiUid){
