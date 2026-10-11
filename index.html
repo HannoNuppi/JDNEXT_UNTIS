@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stundenplan</title>
+<title>Untis Next</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -240,7 +240,7 @@
 <div class="wrap">
   <div class="topbar">
     <div class="logo">
-      <div class="logo-tag">Dein Schuljahr</div>
+      <div class="logo-tag">Untis Next</div>
       <div class="logo-main"><span class="l1">STUNDEN</span><span class="l2">PLAN</span></div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
@@ -270,7 +270,7 @@
   <div class="maintenance-card">
     <div class="icon">🛠️</div>
     <h2>Website in Wartung</h2>
-    <p id="maintenanceMessage">JDNEXT ist momentan vorübergehend nicht verfügbar.</p>
+    <p id="maintenanceMessage">Untis Next ist momentan vorübergehend nicht verfügbar.</p>
     <button class="loginbtn maintenance-bypass-btn" id="maintenanceBypassBtn" type="button" hidden>🛠️ Admin-Wartungsbypass aktivieren</button>
     <p class="maintenance-bypass-help" id="maintenanceBypassHelp" hidden>Nur Admin-Konten können den Wartungsmodus umgehen.</p>
   </div>
@@ -325,7 +325,7 @@ const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.h
 
 
 const THEME_CATALOG = [
-  {id:"Next",name:"Next",price:0,description:"Das originale JDNEXT-Design",bgA:"#0a0c2a",bgB:"#171154",bgC:"#2a1264",pink:"#ff3ea8",cyan:"#33f0e0",gold:"#ffcc4d",violet:"#8b3bff"},
+  {id:"Next",name:"Next",price:0,description:"Das originale Untis Next-Design",bgA:"#0a0c2a",bgB:"#171154",bgC:"#2a1264",pink:"#ff3ea8",cyan:"#33f0e0",gold:"#ffcc4d",violet:"#8b3bff"},
   {id:"Ocean",name:"Ocean Pulse",price:10,description:"Tiefes Blau mit aquahellen Akzenten",bgA:"#06152e",bgB:"#073b58",bgC:"#075d69",pink:"#42dfff",cyan:"#7dfff0",gold:"#f7e37d",violet:"#436cff"},
   {id:"Sunset",name:"Sunset Rush",price:10,description:"Korallrot, Abendsonne und Violett",bgA:"#2b1023",bgB:"#5b203f",bgC:"#8d3b52",pink:"#ff668c",cyan:"#ffc36e",gold:"#ffdf84",violet:"#9b4dbe"},
   {id:"Forest",name:"Forest Beat",price:10,description:"Waldgrün mit frischen Minttönen",bgA:"#061c1a",bgB:"#12372c",bgC:"#145449",pink:"#86e17c",cyan:"#63f1d2",gold:"#e2e36d",violet:"#377e76"},
@@ -499,7 +499,7 @@ function refreshMaintenanceAccess(forceReload=false){
 function applyMaintenanceState(enabled,message,forceReload=false){
   maintenanceEnabled=enabled;
   const messageEl=document.getElementById("maintenanceMessage");
-  if(messageEl) messageEl.textContent=message || "JDNEXT ist momentan vorübergehend nicht verfügbar.";
+  if(messageEl) messageEl.textContent=message || "Untis Next ist momentan vorübergehend nicht verfügbar.";
   document.body.classList.remove("maintenance-pending");
   refreshMaintenanceAccess(forceReload);
 }
@@ -558,14 +558,35 @@ async function ensureAnonymousAuth(){
 
 // Spark-kompatible Identität für Hausaufgaben und Meldungen.
 // Bestehende TobiServices-Logins werden weiterverwendet; sonst anonym.
+function explainFirebaseError(error, action="Dieser Vorgang"){
+  const code=String(error?.code||"");
+  const message=String(error?.message||"");
+  if(code==="auth/operation-not-allowed"){
+    return "Die anonyme Anmeldung ist in Firebase deaktiviert. Öffne das Projekt „tobiservices“ → Authentication → Sign-in method und aktiviere „Anonym“. Danach kann Untis Next auch ohne Konto Hausaufgaben speichern.";
+  }
+  if(code==="auth/unauthorized-domain"){
+    return "Firebase blockiert diese Website-Domain. Ergänze „hannonuppi.github.io“ im Projekt „tobiservices“ unter Authentication → Settings → Authorized domains.";
+  }
+  if(code==="auth/network-request-failed" || code==="unavailable" || code==="deadline-exceeded"){
+    return "Firebase ist momentan nicht erreichbar. Prüfe deine Internetverbindung und versuche es erneut.";
+  }
+  if(code==="permission-denied" || /missing or insufficient permissions/i.test(message)){
+    return "Firebase hat den Vorgang abgelehnt. Öffne im Projekt „tobiservices“ Firestore Database → Rules und veröffentliche die aktuelle firestore.rules aus dem TobiServices-Account-Repository.";
+  }
+  if(code==="auth/too-many-requests"){
+    return "Firebase hat zu viele Anmeldeversuche erkannt. Bitte versuche es später erneut.";
+  }
+  const detail=code ? " ("+code+")" : "";
+  return action+" ist fehlgeschlagen"+detail+". Prüfe die Firebase-Einstellungen und die Internetverbindung.";
+}
 async function ensureTobiAuthForJdnext(){
   await tobiAuthReady;
   if(tobiAuth.currentUser) return tobiAuth.currentUser;
   try{
     return (await tobiAuth.signInAnonymously()).user;
   }catch(error){
-    console.error("Anonyme JDNEXT-Anmeldung fehlgeschlagen:",error);
-    return null;
+    console.error("Anonyme Untis-Next-Anmeldung fehlgeschlagen:",error);
+    throw new Error(explainFirebaseError(error,"Die Firebase-Anmeldung für Untis Next"));
   }
 }
 
@@ -833,7 +854,7 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
   setSync("Speichert…");
   try{
     const user=await ensureTobiAuthForJdnext();
-    if(!user) throw new Error("JDNEXT konnte keine Verbindung herstellen.");
+    if(!user) throw new Error("Untis Next konnte keine Firebase-Anmeldung herstellen.");
     let profile=null;
     if(!user.isAnonymous) profile=await ensureTobiProfile(user);
 
@@ -924,9 +945,10 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       : "● Gespeichert · live für alle sichtbar");
     return {ok:true,rewardQueued:rewardApplied};
   }catch(e){
+    const friendly=explainFirebaseError(e,"Das Speichern der Hausaufgabe");
     console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
-    setSync(e?.message||"⚠️ Speichern verweigert – Regeln oder Verbindung prüfen");
-    throw e;
+    setSync(friendly);
+    throw new Error(friendly);
   }
 }
 function setSync(msg){ document.getElementById("syncBar").textContent = msg; }
@@ -1306,7 +1328,9 @@ async function removeReportedHomework(hwKey,id){
 
 async function reportEntry(hwKey,id,redraw){
   if(wasReported(id)) return;
-  const user=await ensureTobiAuthForJdnext();
+  let user;
+  try{ user=await ensureTobiAuthForJdnext(); }
+  catch(error){ showToast(error?.message||"Untis Next konnte Firebase nicht erreichen."); return; }
   if(!user){
     showToast("⚠️ Meldungen sind momentan nicht verfügbar");
     return;
@@ -1581,7 +1605,7 @@ async function purchaseTheme(theme){
     renderThemeMenu();
   }catch(error){
     console.error("Theme purchase failed:",error);
-    showToast(error?.message||"Der Kauf ist fehlgeschlagen. Prüfe die TobiServices-Firestore-Regeln.");
+    showToast(explainFirebaseError(error,"Der Theme-Kauf"));
   }
 }
 
