@@ -1,0 +1,158 @@
+name: Deploy Untis Next Live and Test Mirror
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      publish_latest:
+        description: "Aktuellen main-Stand direkt live veröffentlichen"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: untis-next-pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build test mirror and stable production site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out development source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Fetch current production snapshot
+        run: git fetch origin production
+
+      - name: Process admin live-publish request
+        env:
+          FIREBASE_PUBLIC_API_KEY: "AIzaSyCwVh8-JIm-pj8N8bOWgwz8-G_cLQ6AVuQ"
+          FORCE_PUBLISH: ${{ inputs.publish_latest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIRESTORE_URL="https://firestore.googleapis.com/v1/projects/tobiservices/databases/(default)/documents/siteSettings/deployment?key=${FIREBASE_PUBLIC_API_KEY}"
+          REQUEST_JSON="$(curl --silent --show-error --max-time 15 "${FIRESTORE_URL}" || printf '{}')"
+          REQUEST_ID="$(printf '%s' "${REQUEST_JSON}" | jq -r '.fields.requestId.stringValue // empty' 2>/dev/null || true)"
+
+          PROD_DIR="$RUNNER_TEMP/untis-next-production"
+          git worktree add --detach "$PROD_DIR" origin/production
+          CURRENT_ID="$(jq -r '.requestId // empty' "$PROD_DIR/.deployment-meta.json" 2>/dev/null || true)"
+
+          if [ "${FORCE_PUBLISH:-false}" = "true" ]; then
+            REQUEST_ID="${REQUEST_ID:-manual-${GITHUB_RUN_ID}}"
+          fi
+
+          if [ -n "$REQUEST_ID" ] && [ "$REQUEST_ID" != "$CURRENT_ID" ]; then
+            echo "A newer admin-approved release request was found; promoting the main source."
+            cp index.html manifest.webmanifest sw.js "$PROD_DIR/"
+            rm -rf "$PROD_DIR/icons"
+            cp -a icons "$PROD_DIR/icons"
+            REQUEST_ID="$REQUEST_ID" SOURCE_SHA="$GITHUB_SHA" PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - <<'PY'
+          import json, os
+          path = os.path.join(os.environ["RUNNER_TEMP"], "untis-next-production", ".deployment-meta.json")
+          data = {
+              "requestId": os.environ["REQUEST_ID"],
+              "publishedCommit": os.environ["SOURCE_SHA"],
+              "publishedAt": os.environ["PUBLISHED_AT"],
+          }
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+              f.write("\\n")
+          PY
+            git -C "$PROD_DIR" config user.name "github-actions[bot]"
+            git -C "$PROD_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C "$PROD_DIR" add index.html manifest.webmanifest sw.js icons .deployment-meta.json
+            git -C "$PROD_DIR" commit -m "Publish Untis Next ${GITHUB_SHA:0:7} to production"
+            git -C "$PROD_DIR" push origin HEAD:production
+            echo "PROMOTED=true" >> "$GITHUB_ENV"
+          else
+            echo "No new publish approval; the production snapshot remains unchanged."
+            echo "PROMOTED=false" >> "$GITHUB_ENV"
+          fi
+          git worktree remove --force "$PROD_DIR"
+
+      - name: Prepare website artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin production
+          PROD_DIR="$RUNNER_TEMP/untis-next-production-output"
+          git worktree add --detach "$PROD_DIR" origin/production
+
+          mkdir -p dist/test dist/icons
+          cp "$PROD_DIR/index.html" "$PROD_DIR/manifest.webmanifest" "$PROD_DIR/sw.js" dist/
+          cp -a "$PROD_DIR/icons/." dist/icons/
+          touch dist/.nojekyll
+
+          cp index.html manifest.webmanifest sw.js dist/test/
+          cp -a icons dist/test/icons
+          touch dist/test/.nojekyll
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path("dist/test")
+          sw = root / "sw.js"
+          text = sw.read_text(encoding="utf-8")
+          match = re.search(r'const CACHE_NAME = "([^"]+)";', text)
+          if match:
+              text = text.replace(match.group(0), 'const CACHE_NAME = "' + match.group(1) + '-test";', 1)
+          sw.write_text(text, encoding="utf-8")
+
+          page = root / "index.html"
+          html = page.read_text(encoding="utf-8")
+          guard = Path(".github/test-mode-guard.js").read_text(encoding="utf-8")
+          injected = """
+          <style id="test-mode-privacy">body{visibility:hidden!important}</style>
+          <script id="test-mode-guard" type="module">
+          """ + guard + """
+          </script>
+          """
+          if "</body>" not in html:
+              raise SystemExit("index.html has no closing body tag")
+          html = html.replace("</body>", injected + "\\n</body>", 1)
+          page.write_text(html, encoding="utf-8")
+
+          metadata = Path("dist/deployment-status.json")
+          state_file = Path(".deployment-meta.json")
+          if state_file.exists():
+              state = state_file.read_text(encoding="utf-8")
+          else:
+              state = '{"requestId":"","publishedCommit":"","publishedAt":""}'
+          metadata.write_text(state, encoding="utf-8")
+          (root / "test-version.json").write_text(
+              '{"sourceCommit":"' + __import__("os").environ.get("GITHUB_SHA", "") + '"}',
+              encoding="utf-8"
+          )
+          PY
+          git worktree remove --force "$PROD_DIR"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy stable production and test mirror
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Build latest APK after an approved live release
+        if: env.PROMOTED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run .github/workflows/android-apk.yml --ref main
