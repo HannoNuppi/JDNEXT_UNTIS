@@ -59,7 +59,8 @@ public final class MainActivity extends Activity {
     private static final int UPDATE_PERMISSION_REQUEST = 7125;
     private static final Set<String> THEME_IDS = new HashSet<>(Arrays.asList(
         "Next", "Ocean", "Sunset", "Forest", "Candy", "Midnight",
-        "Aurora", "Retro", "RoyalRebels", "Bronze", "Silver", "Gold"
+        "Aurora", "Retro", "RoyalRebels", "Bronze", "Silver", "Gold",
+        "WinterEvent", "BirthdayEvent"
     ));
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
