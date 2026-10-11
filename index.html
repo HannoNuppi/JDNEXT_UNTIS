@@ -277,7 +277,6 @@ const oldFirebaseApp = firebase.apps.find(app=>app.options.projectId===OLD_FIREB
 const oldAuth = firebase.auth(oldFirebaseApp);
 const db = firebase.firestore(oldFirebaseApp);
 const jdFunctions = firebase.functions(oldFirebaseApp, "europe-west1");
-const uploadDiscordImageCall = jdFunctions.httpsCallable("uploadJdnextImage");
 const resolveDiscordImageCall = jdFunctions.httpsCallable("resolveJdnextDiscordImage");
 
 const tobiApp = firebase.apps.find(app=>app.options.projectId===TOBI_FIREBASE_CONFIG.projectId)
@@ -573,15 +572,6 @@ async function saveClassworkEntry(key,title){
   return true;
 }
 
-async function uploadImageToDiscord(dataUrl,filename){
-  try{
-    const result=await uploadDiscordImageCall({dataUrl,filename});
-    return result.data;
-  }catch(error){
-    console.error("Discord-Bildupload fehlgeschlagen:",error);
-    throw new Error(error?.message||"Bild konnte nicht zu Discord hochgeladen werden.");
-  }
-}
 
 async function resolveDiscordImage(ref){
   const key=String(ref?.messageId||"")+":"+String(ref?.attachmentId||"");
