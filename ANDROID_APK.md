@@ -10,6 +10,14 @@ Die Android-App prüft beim Start (höchstens einmal alle sechs Stunden), ob auf
 
 Die Datei `update.json` wird zusammen mit der APK veröffentlicht. Sie enthält Versionsnummer, APK-URL, SHA-256-Prüfsumme und Fingerabdruck des Signaturzertifikats.
 
+## Versionssichere Veröffentlichungen
+
+Jeder veröffentlichte Build wird zusätzlich unter einem eigenen Release-Tag wie `android-v1.0.123` gespeichert. Diese APK-Dateien werden bei späteren Veröffentlichungen nicht überschrieben. Der feste Link `android-apk/UntisNext.apk` zeigt weiterhin auf die neueste freigegebene Version; `update.json` behält diesen festen Downloadpfad auch für ältere installierte App-Versionen bei.
+
+Vor dem Aktualisieren des neuesten Release prüft der Workflow den Signatur-Fingerabdruck der neuen APK gegen die aktuell veröffentlichte APK. Fehlt der dauerhafte Keystore oder passt der Schlüssel nicht, bleibt die bisherige öffentliche APK erhalten; der neue Build steht dann nur als Actions-Artefakt zur Verfügung. So wird nicht versehentlich eine Version veröffentlicht, die bestehende Installationen nicht als Update annehmen können.
+
+Ein Signaturschlüsselwechsel ist nur mit der manuellen Workflow-Option `allow_signing_key_migration` möglich. Das ist ausdrücklich ein Migrationsschritt: Bereits installierte Apps mit dem alten Schlüssel müssen deinstalliert und danach mit der neuen APK neu installiert werden. Alte APK-Dateien bleiben dabei als versionierte Releases verfügbar.
+
 ## Wichtig: dauerhaften Signaturschlüssel einrichten
 
 Android erlaubt ein direktes APK-Update nur dann, wenn die neue Version mit demselben Signaturschlüssel wie die installierte App signiert wurde. GitHub Actions erstellt ohne feste Signierungsschlüssel Test-Builds; ihr automatisch generierter Debug-Schlüssel ist nicht für zuverlässige App-Updates geeignet.
