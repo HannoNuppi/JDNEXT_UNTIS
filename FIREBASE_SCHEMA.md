@@ -43,14 +43,14 @@ Diese Einträge werden durch die Website erzeugt; leere Collections müssen nich
 
 Das Backend erstellt unter `system/discord` einen Metadatensatz mit Kanal-ID und Secret-Namen. **Er enthält absichtlich keinen Bot-Token.** Das Feld `tokenStoredInFirestore` ist `false`.
 
-## 3. Discord-Bot-Token: nicht in Firestore
+## 3. Legacy: Discord-Bot-Token für alte Bildverweise
 
-Der Token gehört in **Firebase/Google Cloud Secret Manager**, nicht in eine Firestore-Collection.
+Diese Secret-Function ist optional und wird nur für bereits gespeicherte Discord-Bildverweise benötigt. Neue Hausaufgabenbilder werden komprimiert im TobiServices-Firestore gespeichert und brauchen weder diesen Token noch eine Cloud Function. Falls du die alten Bildverweise weiter anzeigen möchtest, gehört der Token in **Firebase/Google Cloud Secret Manager**, nicht in eine Firestore-Collection.
 
 - Firebase-Projekt: `next-untis-plus`
 - Secret-Name: `DISCORD_BOT_TOKEN`
 - Wert: der echte Bot-Token
-- Functions, die ihn benutzen: `uploadJdnextImage` und `resolveJdnextDiscordImage`
+- Functions, die ihn benutzen: `resolveJdnextDiscordImage` (alte Discord-Bildverweise; `uploadJdnextImage` bleibt nur für Legacy-Aufrufe)
 
 Einrichten kannst du ihn im Terminal im lokalen JDNEXT-Projekt:
 
@@ -91,6 +91,20 @@ Neue Hausaufgaben, Reports, private Autorzuordnungen und Münzereignisse werden 
 
 Browser dürfen diese Zuordnung nur per direktem `get` lesen, wenn der öffentliche Eintrag bereits zwei Meldungen hat; Schreiben und Ändern ist über Regeln eingeschränkt.
 
+### Bilddaten: `jdnextHomework/{homeworkKey}/entries/{entryId}/images/{imageId}`
+
+Die öffentliche Eintragsliste speichert nur kleine Verweise wie `{ kind: "firestore", imageId: "img0", filename: "blatt.jpg" }`. Die JPEG-Daten liegen separat:
+
+```json
+{
+  "filename": "blatt.jpg",
+  "dataUrl": "data:image/jpeg;base64,<komprimierte Daten>",
+  "createdAt": "<Firestore Timestamp>"
+}
+```
+
+Jedes Bild wird vor dem Upload auf ein Daten-URL-Limit von 800.000 Zeichen komprimiert. Bilddateien werden beim Entfernen der Hausaufgabe zusammen mit dem Eintrag gelöscht.
+
 ### Reports: `jdnextHomework/{homeworkKey}/entries/{entryId}/reports/{reportUid}`
 
 Jede Firebase-Identität darf genau einen Report pro Eintrag anlegen. Das Report-Dokument und das Erhöhen von `reportCount` müssen Teil derselben atomaren Transaktion sein.
@@ -101,4 +115,4 @@ Münzereignisse werden für Post-Boni (`+10`) und Entfernung nach zwei Reports (
 
 Bei einem Saldo von `-50` oder weniger wird im TobiServices-Profil `disabled: true` gesetzt. Im Spark-Tarif kann dieser Ablauf das Firebase-Authentication-Konto nicht serverseitig deaktivieren; die angebundenen Dienste müssen deshalb das Profilfeld `disabled` beachten.
 
-Aktiviere in Firebase Console → Authentication → Sign-in method im Projekt `tobiservices` **Anonym** und veröffentliche dort die Regeln aus `Tobiservices-Account/firestore.rules`. Die Discord-Bild-Uploads sind weiterhin eine separate Cloud-Function-Funktion und werden über `DISCORD_BOT_TOKEN` eingerichtet.
+Aktiviere in Firebase Console → Authentication → Sign-in method im Projekt `tobiservices` **Anonym** und veröffentliche dort die Regeln aus `Tobiservices-Account/firestore.rules`. Neue Text- und Bild-Uploads sowie Reports und Münzen funktionieren dann über Firestore Rules ohne Cloud Functions. Alte Discord-Bildverweise können optional weiterhin die Legacy-Function `resolveJdnextDiscordImage` und `DISCORD_BOT_TOKEN` verwenden.
