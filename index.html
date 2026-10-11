@@ -206,6 +206,34 @@
     margin-top:8px; background:none; border:1px solid var(--line); color:var(--muted); border-radius:8px;
     padding:4px 10px; font-size:12px; cursor:pointer;
   }
+
+  /* Wartungsbypass und Themes */
+  .maintenance-bypass-btn{margin-top:18px;max-width:100%;white-space:normal}
+  .maintenance-bypass-btn[hidden],.maintenance-bypass-help[hidden]{display:none!important}
+  .maintenance-bypass-help{font-size:11px!important;opacity:.85;margin-top:10px!important}
+  .theme-balance{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:11px 13px;margin:12px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:12px}
+  .theme-balance strong{color:var(--gold);font-family:'Baloo 2';font-size:15px}
+  .theme-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+  .theme-card{min-width:0;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--card);display:grid;gap:9px}
+  .theme-preview{height:58px;border-radius:9px;border:1px solid #ffffff25;position:relative;overflow:hidden;background:linear-gradient(135deg,var(--preview-a),var(--preview-b),var(--preview-c))}
+  .theme-preview:before{content:"";position:absolute;width:95px;height:95px;right:-20px;top:-46px;border:1px solid #ffffffa0;border-radius:50%;box-shadow:0 0 0 11px #ffffff14,0 0 0 23px #ffffff0c}
+  .theme-preview:after{content:"";position:absolute;width:125px;height:50px;left:16px;bottom:-31px;border:4px solid #ffffffa0;border-radius:50%;transform:rotate(-18deg)}
+  .theme-card-title{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .theme-card-title strong{font-family:'Baloo 2';font-size:14px}
+  .theme-card-title small{display:block;color:var(--muted);font-size:10px;line-height:1.45;margin-top:2px}
+  .theme-owned-pill{flex:0 0 auto;color:var(--cyan);font-size:9px;font-weight:800}
+  .theme-action{width:100%;min-height:34px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.06);color:var(--text);font:700 11px 'Baloo 2';cursor:pointer;padding:7px 9px}
+  .theme-action.primary{background:linear-gradient(90deg,var(--gold),var(--pink));color:#160d38;border:0}
+  .theme-action:disabled{opacity:.7;cursor:default}
+  .theme-card .classwork-meta{min-height:28px;line-height:1.45}
+  .theme-login-note{font-size:11px;color:var(--muted);line-height:1.6;margin:12px 0 0}
+  body{background:
+    radial-gradient(1200px 700px at 85% -10%,color-mix(in srgb,var(--violet) 34%,transparent),transparent 60%),
+    radial-gradient(900px 600px at -10% 110%,color-mix(in srgb,var(--pink) 24%,transparent),transparent 60%),
+    linear-gradient(160deg,var(--bg-a),var(--bg-b) 55%,var(--bg-c));}
+  .themebtn{border-color:color-mix(in srgb,var(--cyan) 45%,transparent);color:var(--cyan);background:color-mix(in srgb,var(--cyan) 9%,transparent)}
+  @media(max-width:520px){.theme-grid{grid-template-columns:1fr}.theme-preview{height:50px}.maintenance-bypass-btn{width:100%}}
+
 </style>
 </head>
 <body class="maintenance-pending">
@@ -243,6 +271,8 @@
     <div class="icon">🛠️</div>
     <h2>Website in Wartung</h2>
     <p id="maintenanceMessage">JDNEXT ist momentan vorübergehend nicht verfügbar.</p>
+    <button class="loginbtn maintenance-bypass-btn" id="maintenanceBypassBtn" type="button" hidden>🛠️ Admin-Wartungsbypass aktivieren</button>
+    <p class="maintenance-bypass-help" id="maintenanceBypassHelp" hidden>Nur Admin-Konten können den Wartungsmodus umgehen.</p>
   </div>
 </div>
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
@@ -292,6 +322,18 @@ let tobiAuthInitialized = false;
 const tobiAuthReady = new Promise(resolve=>{ resolveTobiAuthReady=resolve; });
 
 const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.html";
+
+
+const THEME_CATALOG = [
+  {id:"Next",name:"Next",price:0,description:"Das originale JDNEXT-Design",bgA:"#0a0c2a",bgB:"#171154",bgC:"#2a1264",pink:"#ff3ea8",cyan:"#33f0e0",gold:"#ffcc4d",violet:"#8b3bff"},
+  {id:"Ocean",name:"Ocean Pulse",price:10,description:"Tiefes Blau mit aquahellen Akzenten",bgA:"#06152e",bgB:"#073b58",bgC:"#075d69",pink:"#42dfff",cyan:"#7dfff0",gold:"#f7e37d",violet:"#436cff"},
+  {id:"Sunset",name:"Sunset Rush",price:10,description:"Korallrot, Abendsonne und Violett",bgA:"#2b1023",bgB:"#5b203f",bgC:"#8d3b52",pink:"#ff668c",cyan:"#ffc36e",gold:"#ffdf84",violet:"#9b4dbe"},
+  {id:"Forest",name:"Forest Beat",price:10,description:"Waldgrün mit frischen Minttönen",bgA:"#061c1a",bgB:"#12372c",bgC:"#145449",pink:"#86e17c",cyan:"#63f1d2",gold:"#e2e36d",violet:"#377e76"},
+  {id:"Candy",name:"Candy Pop",price:10,description:"Süße Neonfarben in Pink und Türkis",bgA:"#260e35",bgB:"#4a1651",bgC:"#7d205e",pink:"#ff5fb7",cyan:"#83eaff",gold:"#ffe37f",violet:"#b35cff"},
+  {id:"Midnight",name:"Midnight Club",price:10,description:"Dunkles Indigo mit kühlen Lichtakzenten",bgA:"#070b19",bgB:"#15172d",bgC:"#292044",pink:"#9e8cff",cyan:"#78aaff",gold:"#d4deff",violet:"#6c5de8"},
+  {id:"Aurora",name:"Aurora Glow",price:10,description:"Polarlicht aus Türkis, Lila und Magenta",bgA:"#071a35",bgB:"#1d1a50",bgC:"#234c61",pink:"#f08dff",cyan:"#6bffe4",gold:"#ffef9a",violet:"#736fff"},
+  {id:"Retro",name:"Retro Arcade",price:10,description:"Arcade-Nostalgie mit warmen Neonfarben",bgA:"#20152b",bgB:"#41264f",bgC:"#78405e",pink:"#ff945e",cyan:"#70e1c2",gold:"#f4d35e",violet:"#c45aa2"}
+];
 
 /* =====================================================================
    KONFIGURATION — hier trägst du deinen Stundenplan ein.
@@ -349,6 +391,7 @@ let classworkData = {};
 let sharedReady = true;
 let maintenanceInitialized = false;
 let maintenanceEnabled = false;
+let maintenanceBlocked = false;
 
 function pad(n){ return n.toString().padStart(2,"0"); }
 function isoDate(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
@@ -406,44 +449,75 @@ function getHomeworkEntries(hwKey){
   return [...active,...older,...legacy];
 }
 
-function applyMaintenanceState(enabled,message){
-  maintenanceEnabled=enabled;
+function isTobiAdmin(profile=activeTobiProfile){
+  return Boolean(activeTobiUser && profile && profile.disabled!==true
+    && Array.isArray(profile.tags) && profile.tags.includes("admin"));
+}
+function hasActiveMaintenanceBypass(){
+  return isTobiAdmin() && activeTobiProfile?.maintenanceBypass===true;
+}
+function renderMaintenanceBypassButton(){
+  const button=document.getElementById("maintenanceBypassBtn");
+  const help=document.getElementById("maintenanceBypassHelp");
+  const admin=isTobiAdmin();
+  if(button){
+    button.hidden=!admin;
+    button.disabled=false;
+    button.textContent=activeTobiProfile?.maintenanceBypass===true
+      ? "🛠️ Admin-Wartungsbypass deaktivieren"
+      : "🛠️ Admin-Wartungsbypass aktivieren";
+  }
+  if(help){
+    help.hidden=!admin;
+    help.textContent=maintenanceEnabled
+      ? (hasActiveMaintenanceBypass()
+        ? "Der Bypass ist aktiv. Dein Admin-Konto kann die Website während der Wartung weiterverwenden."
+        : "Aktiviere den Bypass, um die Website während der Wartung zu benutzen.")
+      : "Du kannst den Bypass schon vor einer Wartung aktivieren.";
+  }
+}
+function refreshMaintenanceAccess(forceReload=false){
+  const blocked=maintenanceEnabled && !hasActiveMaintenanceBypass();
+  const changed=blocked!==maintenanceBlocked;
+  maintenanceBlocked=blocked;
   const overlay=document.getElementById("maintenanceOverlay");
+  if(overlay) overlay.classList.toggle("show",blocked);
+  renderMaintenanceBypassButton();
+  if(changed || forceReload){
+    if(blocked){
+      resetHomeworkListeners();
+      sharedHomeworkData={};
+      olderSharedHomeworkData={};
+      legacyHomeworkData={};
+      homeworkData={};
+      renderAll();
+    }else{
+      reloadWeekData();
+    }
+  }
+}
+function applyMaintenanceState(enabled,message,forceReload=false){
+  maintenanceEnabled=enabled;
   const messageEl=document.getElementById("maintenanceMessage");
   if(messageEl) messageEl.textContent=message || "JDNEXT ist momentan vorübergehend nicht verfügbar.";
-  if(overlay) overlay.classList.toggle("show",enabled);
   document.body.classList.remove("maintenance-pending");
+  refreshMaintenanceAccess(forceReload);
 }
-
 function startMaintenanceListener(){
   tobiDb.collection("siteSettings").doc("jdnext").onSnapshot(
     snap=>{
       const data=snap.exists ? (snap.data()||{}) : {};
       const enabled=data.enabled===true;
       const message=typeof data.message==="string" ? data.message.trim() : "";
-      const changed=!maintenanceInitialized || enabled!==maintenanceEnabled;
+      const firstLoad=!maintenanceInitialized;
       maintenanceInitialized=true;
-      applyMaintenanceState(enabled,message);
-
-      if(changed){
-        if(enabled){
-          resetHomeworkListeners();
-          sharedHomeworkData={};
-          olderSharedHomeworkData={};
-          legacyHomeworkData={};
-          homeworkData={};
-          renderAll();
-        }else{
-          reloadWeekData();
-        }
-      }
+      applyMaintenanceState(enabled,message,firstLoad);
     },
     err=>{
       console.warn("Maintenance-Status konnte nicht geladen werden:",err);
       if(!maintenanceInitialized){
         maintenanceInitialized=true;
-        applyMaintenanceState(false,"");
-        reloadWeekData();
+        applyMaintenanceState(false,"",true);
       }
     }
   );
@@ -852,7 +926,7 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
   }catch(e){
     console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
     setSync(e?.message||"⚠️ Speichern verweigert – Regeln oder Verbindung prüfen");
-    return false;
+    throw e;
   }
 }
 function setSync(msg){ document.getElementById("syncBar").textContent = msg; }
@@ -1054,7 +1128,10 @@ function openModal(date,pIdx,subject){
       const text=textEl.value.trim();
       const author=authorEl.value.trim();
       errEl.textContent="";
-      if(!text) return;
+      if(text.length<3){
+        errEl.textContent="Bitte mindestens 3 Zeichen als Hausaufgabe eintragen.";
+        return;
+      }
       if(text.length>1000){
         errEl.textContent="Die Hausaufgabe ist zu lang (max. 1000 Zeichen).";
         return;
@@ -1291,6 +1368,33 @@ document.getElementById("loginBtn").onclick=()=>{
   location.href=ACCOUNT_URL;
 };
 
+document.getElementById("maintenanceBypassBtn").onclick=async()=>{
+  const button=document.getElementById("maintenanceBypassBtn");
+  if(!isTobiAdmin()){
+    showToast("Nur ein angemeldeter Admin kann den Wartungsbypass verwenden.");
+    return;
+  }
+  const enabled=activeTobiProfile?.maintenanceBypass!==true;
+  button.disabled=true;
+  try{
+    await tobiDb.collection("users").doc(activeTobiUser.uid).update({
+      maintenanceBypass:enabled,
+      lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    activeTobiProfile={...activeTobiProfile,maintenanceBypass:enabled};
+    refreshMaintenanceAccess();
+    showToast(enabled
+      ? "🛠️ Wartungsbypass aktiviert."
+      : "🛠️ Wartungsbypass deaktiviert.");
+  }catch(error){
+    console.error("Maintenance bypass update failed:",error);
+    showToast("Bypass konnte nicht gespeichert werden. Prüfe die TobiServices-Firestore-Regeln.");
+  }finally{
+    renderMaintenanceBypassButton();
+  }
+};
+
+
 function updateTobiLoginButton(){
   const button=document.getElementById("loginBtn");
   if(!button) return;
@@ -1317,6 +1421,9 @@ tobiAuth.onAuthStateChanged(async user=>{
     resolveTobiAuthReady(user);
   }
   updateTobiLoginButton();
+  applyTheme(activeTobiUser ? "Next" : (localStorage.getItem("jdnextTheme")||"Next"));
+  renderMaintenanceBypassButton();
+  refreshMaintenanceAccess();
   if(!user||user.isAnonymous) return;
 
   tobiProfileUnsubscribe=tobiDb.collection("users").doc(user.uid).onSnapshot(snapshot=>{
@@ -1325,33 +1432,159 @@ tobiAuth.onAuthStateChanged(async user=>{
       showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
     }
     updateTobiLoginButton();
-  },error=>console.warn("TobiServices-Guthaben konnte nicht geladen werden:",error));
+    applyTheme(activeTobiProfile?.equippedTheme || "Next");
+    renderMaintenanceBypassButton();
+    refreshMaintenanceAccess();
+  },error=>{
+    console.warn("TobiServices-Guthaben konnte nicht geladen werden:",error);
+    activeTobiProfile=null;
+    renderMaintenanceBypassButton();
+    refreshMaintenanceAccess();
+  });
 });
 
-function openThemeMenu(){
-  const overlay=document.getElementById("overlay");
-  const modal=document.getElementById("modal");
-  const equipped=localStorage.getItem("jdnextTheme")||"Next";
-  modal.innerHTML=`
-    <button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>
-    <h2>🎨 Themes</h2>
-    <div class="msub">Dein Look und dein Inventar</div>
-    <div class="classwork-section" style="margin-top:12px">
-      <div class="classwork-head"><h3>Inventar · 1 Theme</h3><span style="color:var(--cyan);font-size:11px">Besessen</span></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-        <div><strong style="font-family:'Baloo 2';color:var(--gold)">✨ Next</strong><div class="classwork-meta">Das originale JDNEXT-Design</div></div>
-        <button class="classwork-save" id="equipNext" type="button" style="width:auto;padding:0 10px;font-size:10px">${equipped==="Next"?"Ausgerüstet":"Ausrüsten"}</button>
-      </div>
-    </div>
-    <p class="classwork-meta">Weitere Themes können später hier ins Inventar kommen.</p>`;
-  modal.querySelector("#closeModal").onclick=closeModal;
-  modal.querySelector("#equipNext").onclick=()=>{
-    localStorage.setItem("jdnextTheme","Next");
-    modal.querySelector("#equipNext").textContent="Ausgerüstet";
-    showToast("✨ Next-Theme ausgerüstet");
-  };
-  overlay.classList.add("show");
+function findTheme(themeId){
+  return THEME_CATALOG.find(theme=>theme.id===themeId) || THEME_CATALOG[0];
 }
+function applyTheme(themeId){
+  const theme=findTheme(themeId);
+  const root=document.documentElement;
+  root.dataset.jdnextTheme=theme.id.toLowerCase();
+  root.style.setProperty("--bg-a",theme.bgA);
+  root.style.setProperty("--bg-b",theme.bgB);
+  root.style.setProperty("--bg-c",theme.bgC);
+  root.style.setProperty("--pink",theme.pink);
+  root.style.setProperty("--cyan",theme.cyan);
+  root.style.setProperty("--gold",theme.gold);
+  root.style.setProperty("--violet",theme.violet);
+}
+function getOwnedThemeIds(profile=activeTobiProfile){
+  const owned=Array.isArray(profile?.ownedThemes)?profile.ownedThemes:[];
+  return new Set(["Next",...owned]);
+}
+function currentEquippedTheme(){
+  if(activeTobiUser) return findTheme(activeTobiProfile?.equippedTheme||"Next").id;
+  return findTheme(localStorage.getItem("jdnextTheme")||"Next").id;
+}
+function renderThemeMenu(){
+  const modal=document.getElementById("modal");
+  const owned=getOwnedThemeIds();
+  const equipped=currentEquippedTheme();
+  const coins=Number.isSafeInteger(activeTobiProfile?.goldCoins)?activeTobiProfile.goldCoins:0;
+  const accountReady=Boolean(activeTobiUser && activeTobiProfile && activeTobiProfile.disabled!==true);
+  const status=activeTobiUser && !activeTobiProfile
+    ? "Dein Kontostand wird geladen…"
+    : accountReady
+      ? coins.toLocaleString("de-DE")+" Goldmünzen · Themes kosten je 10 Münzen"
+      : "Käufe werden mit einem angemeldeten TobiServices-Konto gespeichert.";
+  modal.innerHTML =
+    '<button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>'+
+    '<h2>🎨 Themes</h2>'+
+    '<div class="msub">Kaufe weitere Looks für deine Stundenplan-App. Ein Theme kostet 10 Goldmünzen.</div>'+
+    '<div class="theme-balance"><span>DEIN GUTHABEN</span><strong>✦ '+escapeHtml(status)+'</strong></div>'+
+    '<div class="theme-grid">'+THEME_CATALOG.map(theme=>{
+      const hasTheme=owned.has(theme.id);
+      const isEquipped=equipped===theme.id;
+      let action="login",label="Anmelden zum Kauf",disabled=false,buttonClass="";
+      if(isEquipped){action="equipped";label="✓ Ausgerüstet";disabled=true;}
+      else if(hasTheme){action="equip";label="Ausrüsten";}
+      else if(accountReady){action="buy";label="✦ Für 10 kaufen";buttonClass=" primary";disabled=coins<10;}
+      else if(activeTobiUser){action="loading";label="Profil wird geladen…";disabled=true;}
+      const badge=isEquipped?"AUSGERÜSTET":hasTheme?"BESESSEN":theme.price===0?"GRATIS":"10 ✦";
+      return '<article class="theme-card">'+
+        '<div class="theme-preview" style="--preview-a:'+theme.bgA+';--preview-b:'+theme.bgB+';--preview-c:'+theme.pink+'"></div>'+
+        '<div class="theme-card-title"><div><strong>'+escapeHtml(theme.name)+'</strong><small>'+escapeHtml(theme.description)+'</small></div><span class="theme-owned-pill">'+badge+'</span></div>'+
+        '<button class="theme-action'+buttonClass+'" type="button" data-theme-action="'+action+'" data-theme-id="'+theme.id+'" '+(disabled?'disabled':'')+'>'+label+'</button>'+
+      '</article>';
+    }).join("")+'</div>'+
+    '<p class="theme-login-note">Deine gekauften Themes und die aktuelle Auswahl werden im TobiServices-Profil gespeichert. Das Grundtheme Next bleibt kostenlos. Der Kauf reduziert dein echtes Goldguthaben um 10.</p>';
+  modal.querySelector("#closeModal").onclick=closeModal;
+  modal.querySelectorAll("[data-theme-action]").forEach(button=>{
+    button.addEventListener("click",async()=>{
+      const theme=findTheme(button.dataset.themeId);
+      const action=button.dataset.themeAction;
+      if(action==="equip") await equipTheme(theme);
+      else if(action==="buy") await purchaseTheme(theme);
+      else if(action==="login") location.href=ACCOUNT_URL;
+    });
+  });
+}
+function openThemeMenu(){
+  renderThemeMenu();
+  document.getElementById("overlay").classList.add("show");
+}
+async function equipTheme(theme){
+  try{
+    if(activeTobiUser){
+      if(!activeTobiProfile || activeTobiProfile.disabled===true) throw new Error("Dein TobiServices-Konto ist noch nicht bereit oder gesperrt.");
+      if(!getOwnedThemeIds().has(theme.id)) throw new Error("Dieses Theme besitzt du noch nicht.");
+      await tobiDb.collection("users").doc(activeTobiUser.uid).update({equippedTheme:theme.id});
+      activeTobiProfile={...activeTobiProfile,equippedTheme:theme.id};
+    }else{
+      if(theme.id!=="Next") throw new Error("Melde dich an, um gekaufte Themes zu verwenden.");
+      localStorage.setItem("jdnextTheme","Next");
+    }
+    applyTheme(theme.id);
+    showToast("🎨 "+theme.name+" ausgerüstet");
+    renderThemeMenu();
+  }catch(error){
+    console.error("Theme equip failed:",error);
+    showToast(error?.message||"Theme konnte nicht ausgerüstet werden.");
+  }
+}
+async function purchaseTheme(theme){
+  if(theme.price!==10 || theme.id==="Next"){
+    showToast("Dieses Theme ist kostenlos oder nicht käuflich.");
+    return;
+  }
+  if(!activeTobiUser || !activeTobiProfile){
+    showToast("Melde dich mit TobiServices an, um Themes zu kaufen.");
+    return;
+  }
+  if(activeTobiProfile.disabled===true){
+    showToast("Dein TobiServices-Konto ist gesperrt.");
+    return;
+  }
+  try{
+    const profileRef=tobiDb.collection("users").doc(activeTobiUser.uid);
+    const eventId="theme-"+activeTobiUser.uid+"-"+theme.id;
+    const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
+    const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
+    const result=await tobiDb.runTransaction(async transaction=>{
+      const profileSnap=await transaction.get(profileRef);
+      if(!profileSnap.exists) throw new Error("Dein TobiServices-Profil wurde nicht gefunden.");
+      const profile=profileSnap.data()||{};
+      if(profile.disabled===true) throw new Error("Dein TobiServices-Konto ist gesperrt.");
+      const coins=Number.isSafeInteger(profile.goldCoins)?profile.goldCoins:0;
+      const owned=Array.isArray(profile.ownedThemes)?profile.ownedThemes:[];
+      if(owned.includes(theme.id)) return {alreadyOwned:true,coins,owned};
+      if(coins<10) throw new Error("Du brauchst mindestens 10 Goldmünzen für dieses Theme.");
+      const nextOwned=[...owned,theme.id];
+      transaction.update(profileRef,{
+        goldCoins:coins-10,
+        ownedThemes:nextOwned,
+        lastProfileChangeAt:stamp(),
+        lastJdnextCoinEventId:eventId
+      });
+      transaction.set(eventRef,{
+        uid:activeTobiUser.uid,
+        amount:-10,
+        type:"theme-purchase",
+        themeId:theme.id,
+        createdAt:stamp()
+      });
+      return {alreadyOwned:false,coins:coins-10,owned:nextOwned};
+    });
+    activeTobiProfile={...activeTobiProfile,goldCoins:result.coins,ownedThemes:result.owned};
+    updateTobiLoginButton();
+    showToast(result.alreadyOwned?"Dieses Theme gehört dir bereits.":"🎨 "+theme.name+" gekauft · −10 Goldmünzen");
+    renderThemeMenu();
+  }catch(error){
+    console.error("Theme purchase failed:",error);
+    showToast(error?.message||"Der Kauf ist fehlgeschlagen. Prüfe die TobiServices-Firestore-Regeln.");
+  }
+}
+
 document.getElementById("themeBtn").onclick=openThemeMenu;
 
 // ---- PWA / App-Installation ----
@@ -1409,7 +1642,7 @@ function reloadWeekData(){
   classworkData={};
   homeworkData={};
   renderAll();
-  if(!maintenanceEnabled){
+  if(!maintenanceBlocked){
     loadLegacyHomework();
     loadClasswork();
     loadHomework();
