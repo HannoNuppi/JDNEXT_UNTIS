@@ -63,6 +63,17 @@ firebase deploy --only functions
 Die CLI fordert dich zur Eingabe des geheimen Wertes auf. Den Token nicht in GitHub, HTML, ein öffentliches Dokument oder eine normale Firestore-Collection schreiben. Nach Änderung des Secrets müssen die referenzierenden Functions erneut deployed werden.
 
 
+## 5. Theme-Käufe
+
+Ein gekaufter Stil wird im privaten Profil `users/{uid}` gespeichert:
+
+- `ownedThemes`: Liste der gekauften Theme-IDs.
+- `equippedTheme`: aktuell verwendete Theme-ID.
+- `goldCoins`: vorhandener Münzsaldo; ein Kauf reduziert ihn atomar um 10.
+- `lastJdnextCoinEventId` und `lastProfileChangeAt`: Nachweisfelder der Profiländerung.
+
+Ein Kauf erzeugt gleichzeitig `jdnextCoinEvents/theme-{uid}-{themeId}` mit `uid`, `amount: -10`, `type: "theme-purchase"`, `themeId` und `createdAt`. Firestore Rules prüfen Profiländerung und Ereignis gemeinsam. Browser dürfen Ereignisse weder lesen noch nachträglich verändern.
+
 ## 4. Neue Hausaufgaben und Münzen (Spark-kompatibel)
 
 Neue Hausaufgaben, Reports, private Autorzuordnungen und Münzereignisse werden im Firestore-Projekt `tobiservices` gespeichert. Dadurch können die Firestore Rules zusammengehörige Änderungen mit `getAfter()` und atomaren Client-Transaktionen prüfen; für die Text-Hausaufgaben-Münzlogik ist keine Cloud Function nötig.
