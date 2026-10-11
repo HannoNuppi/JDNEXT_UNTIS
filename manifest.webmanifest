@@ -1,7 +1,7 @@
 {
-  "name": "Stundenplan",
-  "short_name": "Stundenplan",
-  "description": "Stundenplan und gemeinsame Hausaufgaben",
+  "name": "Untis Next",
+  "short_name": "Untis Next",
+  "description": "Stundenplan und gemeinsame Hausaufgaben mit Untis Next",
   "lang": "de-DE",
   "start_url": "./",
   "scope": "./",
