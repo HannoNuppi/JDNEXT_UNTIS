@@ -35,6 +35,16 @@ Admins können während des Wartungsmodus in der Wartungsansicht den **Admin-War
 
 Für neue Posts, Bildanhänge, Reports und Münzen muss `Tobiservices-Account/firestore.rules` im Projekt `tobiservices` veröffentlicht und **Authentication → Sign-in method → Anonym** aktiviert sein. Die Regeln aus diesem Repository bleiben für Klassenarbeiten und bereits vorhandene Legacy-Hausaufgaben im Projekt `next-untis-plus` erforderlich.
 
+## Android APK
+
+Untis Next kann als Android-APK gebaut werden. Die GitHub-Action baut nach relevanten Änderungen automatisch eine installierbare Debug-APK. Im Web-App-Kopf gibt es auch einen **APK**-Link.
+
+- [APK herunterladen](https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/tag/android-apk)
+- [APK-Build manuell starten / Status ansehen](https://github.com/HannoNuppi/JDNEXT_UNTIS/actions/workflows/android-apk.yml)
+- [Bauanleitung und technische Details](ANDROID_APK.md)
+
+Das APK lädt Untis Next über HTTPS. Bei einem der zwölf Themes wechselt das Browser-Tab-Favicon; in der Android-App wird das passende Launcher-Icon durch die native App-Bridge aktiviert. Bereits installierte Browser-PWAs übernehmen ein Icon-Update nicht zuverlässig. Die APK benötigt für Stundenplan, Login und Hausaufgaben eine Internetverbindung.
+
 ## GitHub Pages / PWA
 
 Die App kann direkt über GitHub Pages betrieben und als PWA installiert werden.
