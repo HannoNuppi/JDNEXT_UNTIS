@@ -99,13 +99,14 @@ jobs:
           cp "$PROD_DIR/index.html" "$PROD_DIR/manifest.webmanifest" "$PROD_DIR/sw.js" dist/
           cp -a "$PROD_DIR/icons/." dist/icons/
           touch dist/.nojekyll
+          export PROD_STATE_PATH="$PROD_DIR/.deployment-meta.json"
 
           cp index.html manifest.webmanifest sw.js dist/test/
           cp -a icons dist/test/icons
           touch dist/test/.nojekyll
           python3 - <<'PY'
           from pathlib import Path
-          import re
+          import re, os
           root = Path("dist/test")
           sw = root / "sw.js"
           text = sw.read_text(encoding="utf-8")
@@ -129,7 +130,7 @@ jobs:
           page.write_text(html, encoding="utf-8")
 
           metadata = Path("dist/deployment-status.json")
-          state_file = Path(".deployment-meta.json")
+          state_file = Path(os.environ["PROD_STATE_PATH"])
           if state_file.exists():
               state = state_file.read_text(encoding="utf-8")
           else:
