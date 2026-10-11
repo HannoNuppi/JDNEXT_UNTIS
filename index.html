@@ -1293,7 +1293,10 @@ document.getElementById("loginBtn").onclick=()=>{
 function updateTobiLoginButton(){
   const button=document.getElementById("loginBtn");
   if(!button) return;
-  if(activeTobiUser){
+  if(activeTobiUser && activeTobiProfile?.disabled===true){
+    button.textContent="⛔ Konto gesperrt";
+    button.title="Dein Konto ist für TobiServices-Dienste gesperrt. Hilfe im Account Center.";
+  }else if(activeTobiUser){
     const name=activeTobiProfile?.displayName||activeTobiUser.displayName||activeTobiUser.email||"Angemeldet";
     const coins=Number.isSafeInteger(activeTobiProfile?.goldCoins)?activeTobiProfile.goldCoins:0;
     button.textContent=`✦ ${coins.toLocaleString("de-DE")} Gold`;
