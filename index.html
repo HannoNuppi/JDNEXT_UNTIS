@@ -602,12 +602,29 @@ async function resolveDiscordImage(ref){
   return null;
 }
 
-function renderDiscordGallery(container,images){
+async function resolveHomeworkImage(ref,hwKey,entryId){
+  if(ref?.kind==="firestore" && typeof ref.imageId==="string"){
+    try{
+      const snapshot=await tobiDb.collection("jdnextHomework").doc(hwKey)
+        .collection("entries").doc(entryId).collection("images").doc(ref.imageId).get();
+      const dataUrl=snapshot.exists?snapshot.data()?.dataUrl:null;
+      if(typeof dataUrl==="string" && dataUrl.startsWith("data:image/jpeg;base64,")
+         && dataUrl.length<=800000) return dataUrl;
+    }catch(error){
+      console.warn("Firestore-Bild konnte nicht geladen werden:",error);
+    }
+    return null;
+  }
+  // Older entries can still contain Discord attachment references.
+  return resolveDiscordImage(ref);
+}
+
+function renderDiscordGallery(container,images,hwKey,entryId){
   if(!Array.isArray(images)||!images.length)return;
   const gallery=el("div","image-gallery");
   container.appendChild(gallery);
   images.forEach(async ref=>{
-    const url=await resolveDiscordImage(ref);
+    const url=await resolveHomeworkImage(ref,hwKey,entryId);
     if(!url){
       const failed=el("div","image-status");
       failed.textContent="Bild momentan nicht verfügbar.";
@@ -758,6 +775,11 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
 
     const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(entry.id);
     const ownerRef=tobiDb.collection("jdnextHomeworkPrivate").doc(hwKey).collection("entries").doc(entry.id);
+    const imageMetadata=(Array.isArray(images)?images.slice(0,3):[]).map(image=>({
+      kind:"firestore",
+      imageId:String(image.imageId),
+      filename:String(image.filename||"bild.jpg").slice(0,120)
+    }));
     const eventId="reward-"+hwKey+"-"+entry.id;
     const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
     const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
@@ -802,7 +824,7 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       transaction.set(entryRef,{
         text:entry.text,
         author:entry.author,
-        images:Array.isArray(images)?images.slice(0,3):[],
+        images:imageMetadata,
         reportCount:0,
         createdAt:stamp()
       });
@@ -811,12 +833,22 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
         authorTobiUid:authorTobiUid,
         createdAt:stamp()
       });
+      (Array.isArray(images)?images.slice(0,3):[]).forEach(image=>{
+        if(typeof image.dataUrl!=="string" || image.dataUrl.length>800000){
+          throw new Error("Ein Bild überschreitet die erlaubte Uploadgröße.");
+        }
+        transaction.set(entryRef.collection("images").doc(String(image.imageId)),{
+          filename:String(image.filename||"bild.jpg").slice(0,120),
+          dataUrl:image.dataUrl,
+          createdAt:stamp()
+        });
+      });
     });
 
     if(!sharedHomeworkData[hwKey]) sharedHomeworkData[hwKey]=[];
     sharedHomeworkData[hwKey].push({
       ...entry,
-      images:Array.isArray(images)?images.slice(0,3):[],
+      images:imageMetadata,
       authorUid:"",
       reportCount:0,
       createdAt:null,
@@ -979,7 +1011,7 @@ function openModal(date,pIdx,subject){
         const textNode=document.createElement("div");
         textNode.textContent=e.text;
         item.appendChild(textNode);
-        renderDiscordGallery(item,e.images);
+        renderDiscordGallery(item,e.images,hwKey,e.id);
         list.appendChild(item);
       });
     }
@@ -1052,13 +1084,13 @@ function openModal(date,pIdx,subject){
         const files=[...imageInput.files].slice(0,3);
         const imageRefs=[];
         for(let index=0;index<files.length;index++){
-          saveBtn.textContent=`Bild ${index+1}/${files.length}…`;
-          const compressed=await compressImageFile(files[index]);
-          const uploaded=await uploadImageToDiscord(compressed,files[index].name);
+          saveBtn.textContent=`Bild ${index+1}/${files.length} komprimieren…`;
+          const dataUrl=await compressImageFile(files[index]);
           imageRefs.push({
-            messageId:String(uploaded.messageId),
-            attachmentId:String(uploaded.attachmentId),
-            filename:String(uploaded.filename||files[index].name).slice(0,120)
+            kind:"firestore",
+            imageId:`img${index}`,
+            filename:String(files[index].name||`bild-${index+1}.jpg`).slice(0,120),
+            dataUrl
           });
         }
         saveBtn.textContent="Speichert…";
@@ -1090,28 +1122,44 @@ function genId(){
 
 async function compressImageFile(file){
   if(!file.type.startsWith("image/")) throw new Error("Bitte nur Bilder auswählen.");
-  if(file.size>20*1024*1024) throw new Error("Das Bild darf höchstens 20 MB groß sein.");
+  if(file.size>20*1024*1024) throw new Error("Das Originalbild darf höchstens 20 MB groß sein.");
 
   const bitmap=await createImageBitmap(file);
-  const maxSide=1600;
-  const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
-  const canvas=document.createElement("canvas");
-  canvas.width=Math.max(1,Math.round(bitmap.width*scale));
-  canvas.height=Math.max(1,Math.round(bitmap.height*scale));
-  const ctx=canvas.getContext("2d",{alpha:false});
-  ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);
-  bitmap.close();
+  try{
+    // Firestore permits up to 1 MiB per document. Keep the encoded data URL
+    // well below that limit so image uploads work on Firebase Spark.
+    const maxBlobBytes=560*1024;
+    const maxSides=[960,800,640,512,384];
+    const qualities=[0.82,0.72,0.62,0.52,0.42,0.32];
+    const canvas=document.createElement("canvas");
+    const ctx=canvas.getContext("2d",{alpha:false});
+    if(!ctx) throw new Error("Canvas konnte nicht initialisiert werden.");
 
-  const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.84));
-  if(!blob) throw new Error("Bild konnte nicht verarbeitet werden.");
-  if(blob.size>7*1024*1024) throw new Error("Das Bild ist nach der Komprimierung noch zu groß.");
-  const bytes=new Uint8Array(await blob.arrayBuffer());
-  let binary="";
-  const chunk=0x8000;
-  for(let i=0;i<bytes.length;i+=chunk){
-    binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
+    for(const maxSide of maxSides){
+      const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
+      canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+      canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);
+      for(const quality of qualities){
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",quality));
+        if(!blob) continue;
+        if(blob.size<=maxBlobBytes){
+          const bytes=new Uint8Array(await blob.arrayBuffer());
+          let binary="";
+          const chunk=0x8000;
+          for(let i=0;i<bytes.length;i+=chunk){
+            binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
+          }
+          const dataUrl="data:image/jpeg;base64,"+btoa(binary);
+          if(dataUrl.length<=800000) return dataUrl;
+        }
+      }
+    }
+    throw new Error("Das Bild ist selbst nach starker Komprimierung zu groß. Bitte ein kleineres Bild auswählen.");
+  }finally{
+    bitmap.close();
   }
-  return "data:image/jpeg;base64,"+btoa(binary);
 }
 
 function wasReported(id){
@@ -1158,6 +1206,11 @@ async function removeReportedHomework(hwKey,id){
       });
       removalBatch.delete(entryRef);
       removalBatch.delete(ownerRef);
+      (Array.isArray(entrySnap.data()?.images)?entrySnap.data().images:[]).forEach(image=>{
+        if(image?.kind==="firestore" && typeof image.imageId==="string"){
+          removalBatch.delete(entryRef.collection("images").doc(image.imageId));
+        }
+      });
       return removalBatch;
     };
     // The reporter cannot read another user's profile. We try an atomic batch
@@ -1174,6 +1227,11 @@ async function removeReportedHomework(hwKey,id){
   }
   batch.delete(entryRef);
   batch.delete(ownerRef);
+  (Array.isArray(entrySnap.data()?.images)?entrySnap.data().images:[]).forEach(image=>{
+    if(image?.kind==="firestore" && typeof image.imageId==="string"){
+      batch.delete(entryRef.collection("images").doc(image.imageId));
+    }
+  });
   await batch.commit();
   return true;
 }
