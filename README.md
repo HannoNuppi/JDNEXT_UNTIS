@@ -46,20 +46,6 @@ Neue Hausaufgabenbilder werden lokal im Browser auf maximal etwa 560 KiB komprim
 
 Bereits vorhandene Einträge aus `next-untis-plus` können noch Discord-Attachment-IDs enthalten. Nur diese alten Bilder benötigen zum Auflösen der Discord-URLs weiterhin die bisherige JDNEXT-Cloud Function; neue Uploads verwenden den direkten Firestore-Weg.
 
-## TobiServices Bootstrap-Schlüssel
+## Kontosperre
 
-Im TobiServices-Account-Client ist mit **Bootstrap-Schlüssel** genau der geheime Wert gemeint, den du vorher mit
-
-`firebase functions:secrets:set TOBI_BOOTSTRAP_KEY`
-
-für das Projekt `tobiservices` gesetzt hast.
-
-Wichtig:
-- **Secret-Name:** `TOBI_BOOTSTRAP_KEY`
-- **Eingabe im Client:** der tatsächliche geheime Wert
-- Nicht eingeben: `TOBI_BOOTSTRAP_KEY` selbst
-- Nicht eingeben: den Discord-Bot-Token
-
-Beim ersten Admin wird dieser Wert serverseitig geprüft. Nach erfolgreicher Erstellung eines Admins kann derselbe Bootstrap-Endpunkt keinen zweiten ersten Admin mehr anlegen.
-
-Cloud Functions benötigen für die Bereitstellung aktuell den Firebase-Blaze-Tarif.
+Bei einem Guthaben von `-50` oder weniger wird `users/{uid}.disabled = true` gesetzt und bei neuen Anmeldungen des TobiServices-Account Centers der Login verweigert. Firebase Authentication selbst kann im Spark-Tarif nicht über einen Client-Write deaktiviert werden; verbundene Dienste müssen das Profilfeld `disabled` beachten. Das Konto und die Daten bleiben erhalten.
