@@ -352,6 +352,13 @@ const THEME_CATALOG = [
   {id:"Gold",name:"Gold",price:100,description:"Gold, Bernstein und Champagner · goldener Glitzer-Trail",trail:["✦","✧","★"],bgA:"#201706",bgB:"#593b0d",bgC:"#8c6819",pink:"#ffd36b",cyan:"#fff0a6",gold:"#fff0a6",violet:"#dba64b"}
 ];
 
+// Event-only themes are intentionally excluded from the public catalog.
+// They become visible only when an admin has granted their ID to the account.
+const EVENT_THEMES = [
+  {id:"WinterEvent",name:"Winterwunder",price:0,description:"Festliches Mitternachtsblau, Eislicht und winterlicher Sternen-Trail",trail:["❄","✦","🎄"],bgA:"#07172c",bgB:"#12345c",bgC:"#7cbbd9",pink:"#bceaff",cyan:"#e6fbff",gold:"#ffe7a3",violet:"#8dbcf5",eventOnly:true},
+  {id:"BirthdayEvent",name:"Birthday Bash",price:0,description:"Festlicher Roségold-Glow mit Konfetti- und Ballon-Trail",trail:["🎈","✦","🎉"],bgA:"#2a1230",bgB:"#71385e",bgC:"#d98b9d",pink:"#ff91c8",cyan:"#9df7ed",gold:"#ffe1a0",violet:"#c68bff",eventOnly:true}
+];
+
 /* =====================================================================
    KONFIGURATION — hier trägst du deinen Stundenplan ein.
    ===================================================================== */
@@ -1489,7 +1496,9 @@ tobiAuth.onAuthStateChanged(async user=>{
 });
 
 function findTheme(themeId){
-  return THEME_CATALOG.find(theme=>theme.id===themeId) || THEME_CATALOG[0];
+  return THEME_CATALOG.find(theme=>theme.id===themeId)
+    || EVENT_THEMES.find(theme=>theme.id===themeId && getOwnedThemeIds().has(theme.id))
+    || THEME_CATALOG[0];
 }
 function applyTheme(themeId){
   const theme=findTheme(themeId);
@@ -1572,7 +1581,7 @@ function renderThemeMenu(){
     '<h2>🎨 Themes</h2>'+
     '<div class="msub">Kaufe besondere Looks für deine Stundenplan-App. Jedes Theme zeigt seinen Preis.</div>'+
     '<div class="theme-balance"><span>DEIN GUTHABEN</span><strong>✦ '+escapeHtml(status)+'</strong></div>'+
-    '<div class="theme-grid">'+THEME_CATALOG.map(theme=>{
+    '<div class="theme-grid">'+[...THEME_CATALOG,...EVENT_THEMES.filter(theme=>owned.has(theme.id))].map(theme=>{
       const hasTheme=owned.has(theme.id);
       const isEquipped=equipped===theme.id;
       let action="login",label="Anmelden zum Kauf",disabled=false,buttonClass="";
