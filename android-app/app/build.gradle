@@ -16,8 +16,8 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix ".debug"
-            versionNameSuffix "-debug"
+            // Keep the standard debug signing key, but do not expose a
+            // ".debug" package suffix or "-debug" app version label.
         }
         release {
             minifyEnabled false
