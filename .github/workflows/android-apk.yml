@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build debug APK
+    name: Build installable APK
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -47,16 +47,24 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build installable debug APK
-        run: gradle --no-daemon --project-dir android-app assembleDebug
+      - name: Build installable APK
+        run: |
+          gradle --no-daemon --project-dir android-app assembleDebug
+          mkdir -p dist
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk dist/UntisNext.apk
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: untis-next-android-apk
-          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+          name: UntisNext-APK
+          path: dist/UntisNext.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Remove previous APK filename
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete-asset android-apk app-debug.apk --yes || true
 
       - name: Publish latest APK download
         uses: softprops/action-gh-release@v2
@@ -65,10 +73,10 @@ jobs:
           target_commitish: main
           name: Untis Next – Android APK
           body: |
-            Automatisch gebautes Android-APK von Untis Next.
-            Installiere die Datei app-debug.apk auf einem Android-Gerät.
-            Dies ist ein Debug-Build, kein Play-Store-Release.
+            Installierbares Android-APK von Untis Next.
+            Die App-Version und der Dateiname enthalten keinen Debug-Zusatz.
+            Dies ist weiterhin ein Test-Build mit Android-Entwicklungssignatur und kein Play-Store-Release.
           prerelease: true
           make_latest: false
           overwrite_files: true
-          files: android-app/app/build/outputs/apk/debug/app-debug.apk
+          files: dist/UntisNext.apk
