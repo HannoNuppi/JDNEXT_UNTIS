@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Untis Next</title>
+<link id="themeFavicon" rel="icon" type="image/svg+xml" href="./icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -257,6 +258,7 @@
     <div style="display:flex;gap:8px;align-items:center">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
       <button class="themebtn" id="themeBtn" type="button">🎨 Themes</button>
+      <a class="loginbtn" id="apkBtn" href="https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/tag/android-apk" title="Android APK herunterladen" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center">📦 APK</a>
       <button class="loginbtn" id="loginBtn">TobiServices Account</button>
     </div>
   </div>
@@ -1505,6 +1507,21 @@ function applyTheme(themeId){
   root.style.setProperty("--trail-color-b",theme.cyan);
   root.style.setProperty("--trail-color-c",theme.gold);
   root.dataset.premiumTrail=Array.isArray(theme.trail) ? theme.id.toLowerCase() : "off";
+
+  // Change the browser tab icon to match the active theme.
+  const iconLink=document.getElementById("themeFavicon");
+  if(iconLink){
+    const svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">'+
+      '<rect x="1" y="1" width="46" height="46" rx="11" fill="'+theme.bgB+'"/>'+
+      '<path d="M14 12v13c0 8 4 12 10 12s10-4 10-12V12" fill="none" stroke="'+theme.pink+'" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>'+
+      '<path d="M35 5l2.4 5.6L43 13l-5.6 2.4L35 21l-2.4-5.6L27 13l5.6-2.4z" fill="'+theme.cyan+'"/>'+
+      '<circle cx="10" cy="34" r="2.2" fill="'+theme.gold+'"/></svg>';
+    iconLink.href="data:image/svg+xml;charset=UTF-8,"+encodeURIComponent(svg);
+  }
+  // In the APK the native bridge switches the actual Android launcher icon.
+  if(window.UntisNextAndroid && typeof window.UntisNextAndroid.setThemeIcon==="function"){
+    try{window.UntisNextAndroid.setThemeIcon(theme.id);}catch(error){console.warn("Launcher-Icon konnte nicht gewechselt werden:",error);}
+  }
 }
 function getOwnedThemeIds(profile=activeTobiProfile){
   const owned=Array.isArray(profile?.ownedThemes)?profile.ownedThemes:[];
