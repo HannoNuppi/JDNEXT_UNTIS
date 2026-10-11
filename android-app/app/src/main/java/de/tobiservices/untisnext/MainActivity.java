@@ -123,17 +123,17 @@ public final class MainActivity extends Activity {
     private void applyLauncherIcon(String themeId) {
         PackageManager manager = getPackageManager();
         // Enable the new launcher alias first so the launcher never temporarily has zero icons.
-        String selected = getPackageName() + ".ThemeIcon" + themeId;
+        String selected = MainActivity.class.getPackage().getName() + ".ThemeIcon" + themeId;
         try {
             manager.setComponentEnabledSetting(
-                new ComponentName(this, selected),
+                new ComponentName(getPackageName(), selected),
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             );
             for (String id : THEME_IDS) {
                 if (id.equals(themeId)) continue;
                 manager.setComponentEnabledSetting(
-                    new ComponentName(this, getPackageName() + ".ThemeIcon" + id),
+                    new ComponentName(getPackageName(), MainActivity.class.getPackage().getName() + ".ThemeIcon" + id),
                     PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                     PackageManager.DONT_KILL_APP
                 );
