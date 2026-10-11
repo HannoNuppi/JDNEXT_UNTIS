@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -29,6 +30,9 @@ import java.util.Set;
 public final class MainActivity extends Activity {
     private static final String START_URL = "https://hannonuppi.github.io/JDNEXT_UNTIS/?source=android-apk";
     private static final int FILE_CHOOSER_REQUEST = 7124;
+    private static final String ICON_PREFS = "untis_next_launcher_icon";
+    private static final String PENDING_ICON_KEY = "pending_theme_icon";
+    private static final String ACTIVE_ICON_KEY = "active_theme_icon";
     private static final Set<String> THEME_IDS = new HashSet<>(Arrays.asList(
         "Next", "Ocean", "Sunset", "Forest", "Candy", "Midnight",
         "Aurora", "Retro", "RoyalRebels", "Bronze", "Silver", "Gold"
@@ -116,31 +120,66 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public void setThemeIcon(String themeId) {
             if (themeId == null || !THEME_IDS.contains(themeId)) return;
-            runOnUiThread(() -> applyLauncherIcon(themeId));
+            // Never toggle launcher aliases while the app is visible. Changing the
+            // component used to launch an activity can make some Android launchers
+            // remove/recreate its task. Save the latest theme; onStop applies it
+            // only after the user naturally leaves the app.
+            getSharedPreferences(ICON_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(PENDING_ICON_KEY, themeId)
+                .apply();
         }
     }
 
-    private void applyLauncherIcon(String themeId) {
+    @Override
+    protected void onStop() {
+        super.onStop();
+        applyPendingLauncherIcon();
+    }
+
+    private void applyPendingLauncherIcon() {
+        SharedPreferences prefs = getSharedPreferences(ICON_PREFS, MODE_PRIVATE);
+        String themeId = prefs.getString(PENDING_ICON_KEY, null);
+        if (themeId == null || !THEME_IDS.contains(themeId)) return;
+        if (themeId.equals(prefs.getString(ACTIVE_ICON_KEY, "Next"))) {
+            prefs.edit().remove(PENDING_ICON_KEY).apply();
+            return;
+        }
+        if (applyLauncherIcon(themeId)) {
+            prefs.edit()
+                .putString(ACTIVE_ICON_KEY, themeId)
+                .remove(PENDING_ICON_KEY)
+                .apply();
+        }
+    }
+
+    private boolean applyLauncherIcon(String themeId) {
+        if (themeId == null || !THEME_IDS.contains(themeId)) return false;
         PackageManager manager = getPackageManager();
-        // Enable the new launcher alias first so the launcher never temporarily has zero icons.
-        String selected = MainActivity.class.getPackage().getName() + ".ThemeIcon" + themeId;
+        // Manifest aliases are resolved against the installed applicationId.
+        // Enable the chosen alias before disabling the others so there is never
+        // a period with no launcher icon. DONT_KILL_APP avoids killing the app.
         try {
+            ComponentName selected = new ComponentName(
+                getPackageName(), getPackageName() + ".ThemeIcon" + themeId
+            );
             manager.setComponentEnabledSetting(
-                new ComponentName(getPackageName(), selected),
+                selected,
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             );
             for (String id : THEME_IDS) {
                 if (id.equals(themeId)) continue;
                 manager.setComponentEnabledSetting(
-                    new ComponentName(getPackageName(), MainActivity.class.getPackage().getName() + ".ThemeIcon" + id),
+                    new ComponentName(getPackageName(), getPackageName() + ".ThemeIcon" + id),
                     PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                     PackageManager.DONT_KILL_APP
                 );
             }
+            return true;
         } catch (IllegalArgumentException error) {
-            // Icon updates are best-effort; the selected theme in the app still works.
             android.util.Log.w("UntisNext", "Launcher icon switch failed for " + themeId, error);
+            return false;
         }
     }
 
