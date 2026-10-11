@@ -105,7 +105,6 @@ jobs:
           }
           with open("dist/update.json", "w", encoding="utf-8") as output:
               json.dump(metadata, output, ensure_ascii=False, separators=(",", ":"))
-              output.write("\\n")
           PY
 
       - name: Upload APK and updater metadata as workflow artifact
