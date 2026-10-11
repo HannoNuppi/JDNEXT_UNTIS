@@ -16,11 +16,11 @@ Der Button „TobiServices Account“ öffnet optional das zentrale Account Cent
 
 https://hannonuppi.github.io/Tobiservices-Account/
 
-Ein TobiServices-Konto ist nicht erforderlich, um den Stundenplan oder öffentliche Hausaufgaben anzusehen, zu posten oder zu melden.
+Ein TobiServices-Konto ist nicht erforderlich, um den Stundenplan oder öffentliche Hausaufgaben anzusehen, zu posten oder zu melden. Über den Account-Button können Nutzer jetzt selbst ein Konto mit Anzeigename, E-Mail-Adresse und Passwort erstellen. Goldguthaben und gekaufte Premium-Themes werden im TobiServices-Profil gespeichert.
 
 ## Themes und Wartungsbypass
 
-Die Theme-Auswahl enthält das kostenlose Grundtheme **Next**, sieben Standard-Themes für je **10 Goldmünzen** und vier Premium-Themes: **Royal Rebels** (märchenhafte, rebellische Fantasy) und **Bronze** für je **50**, **Silber** für **70** sowie **Gold** für **100 Goldmünzen**. Die Preise werden nicht nur in der Oberfläche angezeigt: Firestore Rules kontrollieren den festgelegten Preis und die atomare Transaktion aus Goldabzug, Theme-Inventar (`ownedThemes`) und Kaufereignis. Gekaufte Theme-IDs und das ausgerüstete Theme bleiben im TobiServices-Profil gespeichert und werden geräteübergreifend synchronisiert.
+Die Theme-Auswahl enthält das kostenlose Grundtheme **Next**, sieben Standard-Themes für je **10 Goldmünzen** und vier Premium-Themes: **Royal Rebels** (märchenhafte, rebellische Fantasy) und **Bronze** für je **50**, **Silber** für **70** sowie **Gold** für **100 Goldmünzen**. Die Preise werden nicht nur in der Oberfläche angezeigt: Firestore Rules kontrollieren den festgelegten Preis und die atomare Transaktion aus Goldabzug, Theme-Inventar (`ownedThemes`) und Kaufereignis. Gekaufte Theme-IDs und das ausgerüstete Theme bleiben im TobiServices-Profil gespeichert und werden geräteübergreifend synchronisiert. Premium-Themes aktivieren zusätzliche Maus-Trails in passenden Farben und Symbolen: Sternen-Magie für Royal Rebels, Kupfer-Funken für Bronze, Eiskristalle für Silber und goldene Glitzer-Symbole für Gold.
 
 Admins können während des Wartungsmodus in der Wartungsansicht den **Admin-Wartungsbypass** ein- oder ausschalten. Das funktioniert nur für aktive TobiServices-Profile mit dem Tag `admin`; die Umschaltung wird im eigenen Profilfeld `maintenanceBypass` gespeichert.
 
