@@ -2,6 +2,12 @@ name: Build Untis Next Android APK
 
 on:
   workflow_dispatch:
+    inputs:
+      allow_signing_key_migration:
+        description: "Nur aktivieren, wenn ein Signaturschlüsselwechsel samt Neuinstallation gewollt ist"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -75,28 +81,47 @@ jobs:
           mkdir -p dist
           cp android-app/app/build/outputs/apk/debug/app-debug.apk dist/UntisNext.apk
 
-      - name: Create updater metadata with APK and signer fingerprints
+      - name: Calculate immutable APK release tag
+        id: version
         shell: bash
         run: |
+          echo "tag=android-v1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "version_name=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Create latest and immutable updater metadata
+        shell: bash
+        env:
+          APK_TAG: ${{ steps.version.outputs.tag }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+        run: |
+          set -euo pipefail
           APK_SHA256="$(sha256sum dist/UntisNext.apk | awk '{print $1}')"
           SIGNER_SHA256="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs dist/UntisNext.apk | awk -F': ' '/certificate SHA-256 digest:/ {print $2; exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
           test -n "$APK_SHA256"
           test -n "$SIGNER_SHA256"
           if [ -n "${ANDROID_KEYSTORE_PATH:-}" ]; then SIGNING_MODE="stable"; else SIGNING_MODE="development"; fi
-          export APK_SHA256 SIGNER_SHA256 SIGNING_MODE
+          export APK_SHA256 SIGNER_SHA256 SIGNING_MODE APK_TAG VERSION_NAME VERSION_CODE
+          mkdir -p dist/versioned
           python3 - <<'PY'
           import json, os
-          run_number = int(os.environ["GITHUB_RUN_NUMBER"])
-          metadata = {
-              "versionCode": run_number,
-              "versionName": f"1.0.{run_number}",
-              "apkUrl": "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/UntisNext.apk",
+          common = {
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": os.environ["VERSION_NAME"],
+              "releaseTag": os.environ["APK_TAG"],
               "sha256": os.environ["APK_SHA256"],
               "signerSha256": os.environ["SIGNER_SHA256"],
               "signingMode": os.environ["SIGNING_MODE"],
           }
+          stable = dict(common)
+          stable["apkUrl"] = "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/UntisNext.apk"
+          versioned = dict(common)
+          versioned["apkUrl"] = "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/" + os.environ["APK_TAG"] + "/UntisNext.apk"
           with open("dist/update.json", "w", encoding="utf-8") as output:
-              json.dump(metadata, output, ensure_ascii=False, separators=(",", ":"))
+              json.dump(stable, output, ensure_ascii=False, separators=(",", ":"))
+          with open("dist/versioned/update.json", "w", encoding="utf-8") as output:
+              json.dump(versioned, output, ensure_ascii=False, separators=(",", ":"))
           PY
 
       - name: Upload APK and updater metadata as workflow artifact
@@ -107,22 +132,136 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Remove previous APK filename
+      - name: Protect existing APK installations from signing-key changes
+        id: publish_guard
+        shell: bash
+        env:
+          ALLOW_SIGNING_KEY_MIGRATION: ${{ inputs.allow_signing_key_migration }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64}" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## APK wurde nur als Test-Artefakt gebaut"
+              echo
+              echo "Die dauerhaften Android-Signatur-Secrets fehlen. Damit bereits installierte APKs nicht durch einen anderen Debug-Schlüssel unaktualisierbar werden, wurde die öffentliche APK **nicht** überschrieben."
+              echo "Lege ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS und ANDROID_KEY_PASSWORD in GitHub Actions Secrets an."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          NEW_SIGNER="$(jq -r '.signerSha256 // empty' dist/update.json | tr '[:upper:]' '[:lower:]')"
+          OLD_META="$(mktemp)"
+          if curl --fail --location --silent --show-error \
+            "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/update.json" \
+            --output "$OLD_META"; then
+            OLD_SIGNER="$(jq -r '.signerSha256 // empty' "$OLD_META" | tr '[:upper:]' '[:lower:]')"
+            if [ -n "$OLD_SIGNER" ] && [ "$OLD_SIGNER" != "$NEW_SIGNER" ]; then
+              if [ "${ALLOW_SIGNING_KEY_MIGRATION:-false}" != "true" ]; then
+                echo "publish=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo "## Veröffentlichung sicherheitshalber blockiert"
+                  echo
+                  echo "Der neu gebaute APK-Signaturschlüssel unterscheidet sich von dem der derzeit veröffentlichten APK. Android würde ein normales Update ablehnen. Die bestehende öffentliche APK bleibt unverändert."
+                  echo "Wenn du diesen Schlüsselwechsel bewusst durchführen willst, starte den Workflow manuell und aktiviere **allow_signing_key_migration**. Nutzer müssen dann einmal deinstallieren und neu installieren."
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              {
+                echo "## Achtung: APK-Signaturschlüssel wird gewechselt"
+                echo
+                echo "Die neue APK wird auf ausdrückliche Freigabe veröffentlicht. Installierte ältere Versionen benötigen danach eine Neuinstallation."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve the previous APK before updating the latest-download link
+        id: archive_previous
+        if: steps.publish_guard.outputs.publish == 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release delete-asset android-apk app-debug.apk --yes || true
+        run: |
+          set -euo pipefail
+          echo "required=false" >> "$GITHUB_OUTPUT"
+          OLD_META="dist/previous-source-update.json"
+          mkdir -p dist/previous
+          if ! curl --fail --location --silent --show-error \
+            "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/update.json" \
+            --output "$OLD_META"; then
+            exit 0
+          fi
+
+          OLD_TAG="$(jq -r '.releaseTag // empty' "$OLD_META")"
+          if [ -n "$OLD_TAG" ] && gh release view "$OLD_TAG" --repo HannoNuppi/JDNEXT_UNTIS >/dev/null 2>&1; then
+            echo "Previous APK is already stored in immutable release $OLD_TAG."
+            exit 0
+          fi
+
+          OLD_VERSION="$(jq -r '.versionName // empty' "$OLD_META")"
+          if [ -z "$OLD_VERSION" ]; then OLD_VERSION="unknown-${GITHUB_RUN_NUMBER}"; fi
+          ARCHIVE_TAG="android-legacy-v${OLD_VERSION}"
+          if gh release view "$ARCHIVE_TAG" --repo HannoNuppi/JDNEXT_UNTIS >/dev/null 2>&1; then
+            echo "Legacy archive already exists: $ARCHIVE_TAG"
+            exit 0
+          fi
+          curl --fail --location --silent --show-error \
+            "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/UntisNext.apk" \
+            --output dist/previous/UntisNext.apk
+          test -s dist/previous/UntisNext.apk
+          jq --arg tag "$ARCHIVE_TAG" \
+             --arg url "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/$ARCHIVE_TAG/UntisNext.apk" \
+             '.releaseTag = $tag | .apkUrl = $url' "$OLD_META" > dist/previous/update.json
+          echo "required=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$ARCHIVE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Archive the previous APK as an immutable version
+        if: steps.archive_previous.outputs.required == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.archive_previous.outputs.tag }}
+          target_commitish: main
+          name: Untis Next – archivierte APK ${{ steps.archive_previous.outputs.version }}
+          body: |
+            Archivierte APK, die vor Einführung versionierter Releases veröffentlicht wurde.
+            Dieser Download bleibt erhalten und wird nicht durch neue Versionen ersetzt.
+          prerelease: true
+          make_latest: false
+          overwrite_files: false
+          files: |
+            dist/previous/UntisNext.apk
+            dist/previous/update.json
+
+      - name: Publish immutable versioned APK release
+        if: steps.publish_guard.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: main
+          name: Untis Next – Android APK ${{ steps.version.outputs.version_name }}
+          body: |
+            Unveränderlicher APK-Download für Version ${{ steps.version.outputs.version_name }}.
+            Ältere Versionstags und ihre APK-Dateien bleiben erhalten.
+          prerelease: true
+          make_latest: false
+          overwrite_files: false
+          files: |
+            dist/UntisNext.apk
+            dist/versioned/update.json
 
       - name: Publish latest APK and updater metadata
+        if: steps.publish_guard.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-apk
           target_commitish: main
-          name: Untis Next – Android APK
+          name: Untis Next – Android APK (neueste Version)
           body: |
-            Installierbares Android-APK von Untis Next.
-            Die APK prüft beim Start auf Updates und verifiziert Download-Prüfsumme sowie Signaturschlüssel.
-            Für nahtlose Updates muss der permanente Signaturschlüssel als GitHub-Actions-Secrets eingerichtet sein.
-            Ohne diese Secrets ist die APK ein Test-Build mit Entwicklungssignatur; Android kann sie nicht automatisch über Builds mit abweichendem Schlüssel aktualisieren.
+            Neueste installierbare Android-APK von Untis Next.
+            Der stabile Download-Link bleibt gleich. Jede veröffentlichte APK-Version wird zusätzlich unter einem eigenen Versionstag archiviert.
+            Neue Versionen werden nur mit passendem dauerhaftem Signaturschlüssel veröffentlicht, außer ein Schlüsselwechsel wurde manuell freigegeben.
           prerelease: true
           make_latest: false
           overwrite_files: true
