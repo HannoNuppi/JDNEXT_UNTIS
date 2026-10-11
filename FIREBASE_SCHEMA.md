@@ -1,10 +1,10 @@
-# Firebase-Datenstruktur – JDNEXT
+# Firebase-Datenstruktur – Untis Next
 
-Beim ersten Start der JDNEXT-Cloud-Functions-Runtime legt das Backend die Schema-Hinweise automatisch an. Firestore ist schemafrei und erstellt Collections erst zusammen mit echten Dokumenten.
+Beim ersten Start der Untis Next-Cloud-Functions-Runtime legt das Backend die Schema-Hinweise automatisch an. Firestore ist schemafrei und erstellt Collections erst zusammen mit echten Dokumenten.
 
 ## 1. `system/schema`
 
-Schema-Hinweis für Daten, die JDNEXT verwendet. Das Backend erstellt ihn automatisch.
+Schema-Hinweis für Daten, die Untis Next verwendet. Das Backend erstellt ihn automatisch.
 
 ### Bestehende Hausaufgaben (Legacy): `homework/{homeworkKey}/entries/{entryId}`
 
@@ -52,7 +52,7 @@ Diese Secret-Function ist optional und wird nur für bereits gespeicherte Discor
 - Wert: der echte Bot-Token
 - Functions, die ihn benutzen: `resolveJdnextDiscordImage` (alte Discord-Bildverweise; `uploadJdnextImage` bleibt nur für Legacy-Aufrufe)
 
-Einrichten kannst du ihn im Terminal im lokalen JDNEXT-Projekt:
+Einrichten kannst du ihn im Terminal im lokalen Untis Next-Projekt:
 
 ```bash
 firebase use next-untis-plus
