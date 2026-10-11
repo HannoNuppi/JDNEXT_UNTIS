@@ -67,12 +67,14 @@ Die CLI fordert dich zur Eingabe des geheimen Wertes auf. Den Token nicht in Git
 
 Ein gekaufter Stil wird im privaten Profil `users/{uid}` gespeichert:
 
-- `ownedThemes`: Liste der gekauften Theme-IDs.
-- `equippedTheme`: aktuell verwendete Theme-ID.
-- `goldCoins`: vorhandener Münzsaldo; ein Kauf reduziert ihn atomar um 10.
+- `ownedThemes`: Liste der dauerhaft gekauften Theme-IDs.
+- `equippedTheme`: aktuell verwendete Theme-ID; wird separat im Profil gespeichert.
+- `goldCoins`: vorhandener Münzsaldo; Kaufpreise werden atomar abgezogen.
 - `lastJdnextCoinEventId` und `lastProfileChangeAt`: Nachweisfelder der Profiländerung.
 
-Ein Kauf erzeugt gleichzeitig `jdnextCoinEvents/theme-{uid}-{themeId}` mit `uid`, `amount: -10`, `type: "theme-purchase"`, `themeId` und `createdAt`. Firestore Rules prüfen Profiländerung und Ereignis gemeinsam. Browser dürfen Ereignisse weder lesen noch nachträglich verändern.
+Theme-Preise, die sowohl die Oberfläche als auch Firestore Rules prüfen: `Ocean`, `Sunset`, `Forest`, `Candy`, `Midnight`, `Aurora`, `Retro` je 10; `RoyalRebels` und `Bronze` je 50; `Silver` 70; `Gold` 100 Goldmünzen. `Next` bleibt kostenlos.
+
+Ein Kauf erzeugt gleichzeitig `jdnextCoinEvents/theme-{uid}-{themeId}` mit `uid`, dem zum Theme passenden negativen `amount`, `type: "theme-purchase"`, `themeId` und `createdAt`. Firestore Rules validieren Theme-ID, Preis, vorheriges Guthaben und die genau einmalige Ergänzung von `ownedThemes` im selben Commit. Browser dürfen Ereignisse weder lesen noch nachträglich verändern. Weil der Besitz in `users/{uid}` gespeichert wird, bleibt er nach Abmelden, Browserwechsel und erneutem Anmelden erhalten; er hängt nicht am lokalen Browser-Speicher.
 
 ## 4. Neue Hausaufgaben und Münzen (Spark-kompatibel)
 
@@ -95,10 +97,13 @@ Neue Hausaufgaben, Reports, private Autorzuordnungen und Münzereignisse werden 
 ```json
 {
   "authorAuthUid": "<Firebase UID, einschließlich anonymen Sitzungen>",
-  "authorTobiUid": "<TobiServices UID oder null>",
+  "authorTobiUid": "<UID des für den Münzbonus berechtigten TobiServices-Kontos oder null>",
+  "authorTobiAccountUid": "<UID des verwendeten TobiServices-Kontos oder null bei anonymem Post>",
   "createdAt": "<Firestore Timestamp>"
 }
 ```
+
+`authorTobiAccountUid` protokolliert das Konto, das beim Posten tatsächlich angemeldet war – auch wenn es wegen einer Sperre oder des Kontostands keinen Münzbonus bekommt. Es wird keine E-Mail-Adresse gespeichert. `authorTobiUid` bleibt separat für die bestehende Münzbonus-/Moderationslogik erhalten.
 
 Browser dürfen diese Zuordnung nur per direktem `get` lesen, wenn der öffentliche Eintrag bereits zwei Meldungen hat; Schreiben und Ändern ist über Regeln eingeschränkt.
 
