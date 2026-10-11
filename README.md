@@ -20,13 +20,14 @@ Ein TobiServices-Konto ist nicht erforderlich, um den Stundenplan oder öffentli
 
 ## Sicherheit
 
-- Firestore Rules erlauben Bonusbuchungen nur zusammen mit einem neuen Homework-Dokument.
-- Pro Firebase-Identität ist höchstens eine Meldung pro Eintrag erlaubt; der Zähler muss atomar zusammen mit einer neuen Meldung steigen.
-- Entfernen nach zwei Meldungen und die `−20`-Buchung müssen als derselbe Rules-geprüfte Commit erfolgen.
-- Autorzuordnungen und Münzereignisse sind für Browser nicht lesbar, manipulierbar oder löschbar.
-- Der TobiServices-Saldo wird nicht frei vom Client beschreibbar; nur der eng geprüfte Post-/Moderationsablauf oder Admins können ihn ändern.
+- Firestore Rules erzwingen Feldtypen, Längen und gültige Upload-Metadaten.
+- Bonusbuchungen (`+10`) können nur zusammen mit einem neuen Homework-Eintrag und der privaten Autorzuordnung erfolgen.
+- Pro Firebase-Identität ist eine Meldung pro Eintrag erlaubt; die zweite eindeutige Meldung ermöglicht das Entfernen.
+- Moderationsabzug (`−20`), Profilsperre und Löschen müssen als gemeinsamer Rules-geprüfter Commit erfolgen.
+- Private Autorzuordnungen und Münzereignisse sind nicht öffentlich lesbar oder frei änderbar.
+- Der Themenbestand startet mit ausschließlich `Next`.
 
-Für neue Hausaufgaben und Münzen müssen die Regeln aus `Tobiservices-Account/firestore.rules` im Firebase-Projekt `tobiservices` veröffentlicht werden. In Authentication → Sign-in method muss dort **Anonym** aktiviert sein. Die bestehenden Regeln aus diesem Repository bleiben für alte Hausaufgaben und Klassenarbeiten im Projekt `next-untis-plus` erforderlich.
+Für neue Posts, Bildanhänge, Reports und Münzen muss `Tobiservices-Account/firestore.rules` im Projekt `tobiservices` veröffentlicht und **Authentication → Sign-in method → Anonym** aktiviert sein. Die Regeln aus diesem Repository bleiben für Klassenarbeiten und bereits vorhandene Legacy-Hausaufgaben im Projekt `next-untis-plus` erforderlich.
 
 ## GitHub Pages / PWA
 
@@ -35,27 +36,15 @@ Die App kann direkt über GitHub Pages betrieben und als PWA installiert werden.
 
 ## Erstinitialisierung der Firestore-Datenstruktur
 
-Beim ersten Start der JDNEXT-Cloud-Functions-Runtime legt das Backend automatisch die Schema-Referenz `system/schema` und den Integrationshinweis `system/discord` an. Diese Dokumente beschreiben das Eintragformat, legen aber keine leeren Hausaufgaben- oder Klassenarbeits-Collections an: Firestore-Collections entstehen automatisch mit den ersten echten Dokumenten.
+Für die optionale Legacy-Discord-Bildfunktion legt das JDNEXT-Backend Schema-Hinweise an. Neue Hausaufgaben, Reports und Münzereignisse entstehen dagegen direkt im TobiServices-Firestore, sobald ein echter Eintrag geschrieben wird.
 
 Siehe [FIREBASE_SCHEMA.md](FIREBASE_SCHEMA.md) für konkrete Feldformate.
 
-## Discord-Bilder
+## Hausaufgabenbilder
 
-Bilder für Hausaufgaben werden nicht in GitHub oder Firebase Storage gespeichert. JDNEXT lädt sie über eine geschützte Cloud Function mit einem Discord-Bot in den Kanal `1557736296795865108`. In Firestore werden nur Discord-Nachrichten-/Attachment-IDs gespeichert. Beim Anzeigen wird daraus serverseitig eine aktuelle Discord-CDN-URL geholt.
+Neue Hausaufgabenbilder werden lokal im Browser auf maximal etwa 560 KiB komprimiert und als eigene Firestore-Dokumente im TobiServices-Projekt gespeichert. Damit bleiben sie unter der Firestore-Grenze pro Dokument; bis zu drei Bilder pro Aufgabe sind möglich. Für diese neuen Uploads sind weder Discord noch Cloud Functions oder ein Blaze-Tarif nötig.
 
-Einrichtung im lokalen Repository:
-
-1. Firebase CLI installieren und anmelden.
-2. Das Projekt wählen:
-   `firebase use next-untis-plus`
-3. Den Bot-Token als Secret setzen:
-   `firebase functions:secrets:set DISCORD_BOT_TOKEN`
-   Danach den Token **nur in die CLI-Eingabe** einfügen. Er gehört weder in GitHub noch in den Browsercode.
-4. Der Bot muss den Zielkanal sehen und dort Nachrichten mit Dateianhängen senden dürfen.
-5. Backend und Rules deployen:
-   `firebase deploy --only functions,firestore`
-
-Discord-CDN-URLs für Anhänge sind signiert und können ablaufen. Deshalb speichert JDNEXT absichtlich nicht die temporäre URL, sondern ruft beim Anzeigen eine frische URL ab.
+Bereits vorhandene Einträge aus `next-untis-plus` können noch Discord-Attachment-IDs enthalten. Nur diese alten Bilder benötigen zum Auflösen der Discord-URLs weiterhin die bisherige JDNEXT-Cloud Function; neue Uploads verwenden den direkten Firestore-Weg.
 
 ## TobiServices Bootstrap-Schlüssel
 
