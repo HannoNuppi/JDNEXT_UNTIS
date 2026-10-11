@@ -1,6 +1,23 @@
 package de.tobiservices.untisnext;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
+import android.os.Build;
+import android.provider.Settings;
+import android.content.pm.PackageInfo;
+import android.content.pm.Signature;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.security.MessageDigest;
+import java.util.Locale;
+import org.json.JSONObject;
+import androidx.core.content.FileProvider;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -33,12 +50,20 @@ public final class MainActivity extends Activity {
     private static final String ICON_PREFS = "untis_next_launcher_icon";
     private static final String PENDING_ICON_KEY = "pending_theme_icon";
     private static final String ACTIVE_ICON_KEY = "active_theme_icon";
+    private static final String UPDATE_METADATA_URL =
+        "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/update.json";
+    private static final String UPDATE_PREFS = "untis_next_updater";
+    private static final String LAST_CHECK_KEY = "last_check_millis";
+    private static final String LAST_PROMPTED_VERSION_KEY = "last_prompted_version";
+    private static final long UPDATE_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
+    private static final int UPDATE_PERMISSION_REQUEST = 7125;
     private static final Set<String> THEME_IDS = new HashSet<>(Arrays.asList(
         "Next", "Ocean", "Sunset", "Forest", "Candy", "Midnight",
         "Aurora", "Retro", "RoyalRebels", "Bronze", "Silver", "Gold"
     ));
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
+    private File pendingUpdateApk;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -99,6 +124,7 @@ public final class MainActivity extends Activity {
         });
 
         webView.loadUrl(START_URL);
+        checkForUpdates();
     }
 
     private boolean isTrustedFirstParty(Uri uri) {
@@ -187,6 +213,17 @@ public final class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == UPDATE_PERMISSION_REQUEST) {
+            File updateFile = pendingUpdateApk;
+            pendingUpdateApk = null;
+            if (updateFile != null &&
+                (Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls())) {
+                launchApkInstaller(updateFile);
+            } else if (updateFile != null) {
+                Toast.makeText(this, "Die Installation wurde nicht freigegeben.", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
         if (requestCode != FILE_CHOOSER_REQUEST || fileCallback == null) return;
         Uri[] results = null;
         if (resultCode == RESULT_OK && data != null) {
