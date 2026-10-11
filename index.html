@@ -227,6 +227,17 @@
   .theme-action:disabled{opacity:.7;cursor:default}
   .theme-card .classwork-meta{min-height:28px;line-height:1.45}
   .theme-login-note{font-size:11px;color:var(--muted);line-height:1.6;margin:12px 0 0}
+  .theme-trail-particle{
+    position:fixed;left:0;top:0;z-index:9999;pointer-events:none;user-select:none;
+    color:var(--trail-color,var(--gold));font-size:var(--trail-size,15px);font-weight:800;
+    text-shadow:0 0 8px currentColor,0 0 16px color-mix(in srgb,currentColor 70%,transparent);
+    animation:themeTrailFade 680ms cubic-bezier(.15,.65,.4,1) forwards;will-change:transform,opacity;
+  }
+  @keyframes themeTrailFade{
+    0%{transform:translate(-50%,-50%) scale(.65) rotate(-15deg);opacity:1}
+    100%{transform:translate(calc(-50% + var(--trail-dx,0px)),calc(-50% - 28px)) scale(0) rotate(65deg);opacity:0}
+  }
+  @media(prefers-reduced-motion:reduce){.theme-trail-particle{animation-duration:280ms}}
   body{background:
     radial-gradient(1200px 700px at 85% -10%,color-mix(in srgb,var(--violet) 34%,transparent),transparent 60%),
     radial-gradient(900px 600px at -10% 110%,color-mix(in srgb,var(--pink) 24%,transparent),transparent 60%),
@@ -321,7 +332,8 @@ let resolveTobiAuthReady;
 let tobiAuthInitialized = false;
 const tobiAuthReady = new Promise(resolve=>{ resolveTobiAuthReady=resolve; });
 
-const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.html";
+const ACCOUNT_CENTER_URL = "https://hannonuppi.github.io/Tobiservices-Account/account.html";
+const ACCOUNT_URL = "https://hannonuppi.github.io/Tobiservices-Account/login.html?return="+encodeURIComponent(location.href);
 
 
 const THEME_CATALOG = [
@@ -333,10 +345,10 @@ const THEME_CATALOG = [
   {id:"Midnight",name:"Midnight Club",price:10,description:"Dunkles Indigo mit kühlen Lichtakzenten",bgA:"#070b19",bgB:"#15172d",bgC:"#292044",pink:"#9e8cff",cyan:"#78aaff",gold:"#d4deff",violet:"#6c5de8"},
   {id:"Aurora",name:"Aurora Glow",price:10,description:"Polarlicht aus Türkis, Lila und Magenta",bgA:"#071a35",bgB:"#1d1a50",bgC:"#234c61",pink:"#f08dff",cyan:"#6bffe4",gold:"#ffef9a",violet:"#736fff"},
   {id:"Retro",name:"Retro Arcade",price:10,description:"Arcade-Nostalgie mit warmen Neonfarben",bgA:"#20152b",bgB:"#41264f",bgC:"#78405e",pink:"#ff945e",cyan:"#70e1c2",gold:"#f4d35e",violet:"#c45aa2"},
-  {id:"RoyalRebels",name:"Royal Rebels",price:50,description:"Dunkle Märchen-Fantasy mit Königsblau, Violett und rebellischem Pink",bgA:"#160d22",bgB:"#45203f",bgC:"#15365e",pink:"#ff477e",cyan:"#70dfff",gold:"#e6b8ff",violet:"#9b52c9"},
-  {id:"Bronze",name:"Bronze",price:50,description:"Warme Bronze-, Kupfer- und Schokoladentöne",bgA:"#1d130c",bgB:"#50301c",bgC:"#80502d",pink:"#e4a16e",cyan:"#d9b38f",gold:"#efbf7b",violet:"#99613f"},
-  {id:"Silver",name:"Silber",price:70,description:"Kühles Silber mit Stahlblau und klaren Lichtakzenten",bgA:"#111722",bgB:"#303b50",bgC:"#66758e",pink:"#d8e0f2",cyan:"#9ae9ff",gold:"#f0f4ff",violet:"#91a6d8"},
-  {id:"Gold",name:"Gold",price:100,description:"Edles Gold mit Bernstein und leuchtenden Champagner-Tönen",bgA:"#201706",bgB:"#593b0d",bgC:"#8c6819",pink:"#ffd36b",cyan:"#fff0a6",gold:"#fff0a6",violet:"#dba64b"}
+  {id:"RoyalRebels",name:"Royal Rebels",price:50,description:"Märchen-Fantasy in Königsblau und rebellischem Pink · magischer Sternen-Trail",trail:["✦","◆","✧"],bgA:"#160d22",bgB:"#45203f",bgC:"#15365e",pink:"#ff477e",cyan:"#70dfff",gold:"#e6b8ff",violet:"#9b52c9"},
+  {id:"Bronze",name:"Bronze",price:50,description:"Bronze, Kupfer und Schokolade · funkelnder Kupfer-Trail",trail:["✧","●","✦"],bgA:"#1d130c",bgB:"#50301c",bgC:"#80502d",pink:"#e4a16e",cyan:"#d9b38f",gold:"#efbf7b",violet:"#99613f"},
+  {id:"Silver",name:"Silber",price:70,description:"Silber und Stahlblau · eisiger Kristall-Trail",trail:["❄","✦","✧"],bgA:"#111722",bgB:"#303b50",bgC:"#66758e",pink:"#d8e0f2",cyan:"#9ae9ff",gold:"#f0f4ff",violet:"#91a6d8"},
+  {id:"Gold",name:"Gold",price:100,description:"Gold, Bernstein und Champagner · goldener Glitzer-Trail",trail:["✦","✧","★"],bgA:"#201706",bgB:"#593b0d",bgC:"#8c6819",pink:"#ffd36b",cyan:"#fff0a6",gold:"#fff0a6",violet:"#dba64b"}
 ];
 
 /* =====================================================================
@@ -1397,7 +1409,7 @@ function showToast(msg){
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
 document.getElementById("loginBtn").onclick=()=>{
-  location.href=ACCOUNT_URL;
+  location.href=activeTobiUser ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
 };
 
 document.getElementById("maintenanceBypassBtn").onclick=async()=>{
@@ -1489,6 +1501,10 @@ function applyTheme(themeId){
   root.style.setProperty("--cyan",theme.cyan);
   root.style.setProperty("--gold",theme.gold);
   root.style.setProperty("--violet",theme.violet);
+  root.style.setProperty("--trail-color-a",theme.pink);
+  root.style.setProperty("--trail-color-b",theme.cyan);
+  root.style.setProperty("--trail-color-c",theme.gold);
+  root.dataset.premiumTrail=Array.isArray(theme.trail) ? theme.id.toLowerCase() : "off";
 }
 function getOwnedThemeIds(profile=activeTobiProfile){
   const owned=Array.isArray(profile?.ownedThemes)?profile.ownedThemes:[];
@@ -1498,6 +1514,32 @@ function currentEquippedTheme(){
   if(activeTobiUser) return findTheme(activeTobiProfile?.equippedTheme||"Next").id;
   return findTheme(localStorage.getItem("jdnextTheme")||"Next").id;
 }
+
+// Premium cosmetics only: short pointer particles in each theme's palette.
+// They are visual-only, ignore touch input, and honor the reduced-motion setting.
+let lastTrailAt=0;
+document.addEventListener("pointermove",event=>{
+  if(event.pointerType!=="mouse" && event.pointerType!=="pen") return;
+  if(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const theme=findTheme(currentEquippedTheme());
+  if(!Array.isArray(theme.trail) || !theme.trail.length) return;
+  const now=performance.now();
+  if(now-lastTrailAt<26) return;
+  lastTrailAt=now;
+  const particles=document.querySelectorAll(".theme-trail-particle");
+  if(particles.length>28) particles[0].remove();
+  const particle=document.createElement("span");
+  particle.className="theme-trail-particle";
+  particle.textContent=theme.trail[Math.floor(Math.random()*theme.trail.length)];
+  particle.style.left=event.clientX+"px";
+  particle.style.top=event.clientY+"px";
+  particle.style.setProperty("--trail-color",[theme.pink,theme.cyan,theme.gold][Math.floor(Math.random()*3)]);
+  particle.style.setProperty("--trail-size",(11+Math.floor(Math.random()*8))+"px");
+  particle.style.setProperty("--trail-dx",Math.round((Math.random()-.5)*26)+"px");
+  document.body.appendChild(particle);
+  particle.addEventListener("animationend",()=>particle.remove(),{once:true});
+});
+
 function renderThemeMenu(){
   const modal=document.getElementById("modal");
   const owned=getOwnedThemeIds();
