@@ -499,7 +499,8 @@ function refreshMaintenanceAccess(forceReload=false){
 function applyMaintenanceState(enabled,message,forceReload=false){
   maintenanceEnabled=enabled;
   const messageEl=document.getElementById("maintenanceMessage");
-  if(messageEl) messageEl.textContent=message || "Untis Next ist momentan vorübergehend nicht verfügbar.";
+  const safeMessage=String(message||"").replace(/JDNEXT/gi,"Untis Next").trim();
+  if(messageEl) messageEl.textContent=safeMessage || "Untis Next ist momentan vorübergehend nicht verfügbar.";
   document.body.classList.remove("maintenance-pending");
   refreshMaintenanceAccess(forceReload);
 }
