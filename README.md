@@ -18,6 +18,12 @@ https://hannonuppi.github.io/Tobiservices-Account/
 
 Ein TobiServices-Konto ist nicht erforderlich, um den Stundenplan oder öffentliche Hausaufgaben anzusehen, zu posten oder zu melden.
 
+## Themes und Wartungsbypass
+
+Die Theme-Auswahl enthält das kostenlose Grundtheme **Next** und sieben weitere Themes für jeweils **10 Goldmünzen**. Käufe werden atomar im Projekt `tobiservices` verbucht: Der Kontostand wird um 10 reduziert und das Theme-Inventar erweitert. Die eigene Theme-Auswahl wird im TobiServices-Profil gespeichert und zwischen Geräten synchronisiert.
+
+Admins können während des Wartungsmodus in der Wartungsansicht den **Admin-Wartungsbypass** ein- oder ausschalten. Das funktioniert nur für aktive TobiServices-Profile mit dem Tag `admin`; die Umschaltung wird im eigenen Profilfeld `maintenanceBypass` gespeichert.
+
 ## Sicherheit
 
 - Firestore Rules erzwingen Feldtypen, Längen und gültige Upload-Metadaten.
