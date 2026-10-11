@@ -2,6 +2,9 @@ plugins {
     id "com.android.application"
 }
 
+def appVersionCodeValue = (project.findProperty("appVersionCode") ?: "1").toString().toInteger()
+def appVersionNameValue = (project.findProperty("appVersionName") ?: "1.0.0").toString()
+
 android {
     namespace "de.tobiservices.untisnext"
     compileSdk 35
@@ -10,16 +13,30 @@ android {
         applicationId "de.tobiservices.untisnext"
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName "1.0.0"
+        versionCode appVersionCodeValue
+        versionName appVersionNameValue
+    }
+
+    signingConfigs {
+        release {
+            def keyPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (keyPath != null && !keyPath.trim().isEmpty()) {
+                storeFile file(keyPath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         debug {
-            // Keep the standard debug signing key, but do not expose a
-            // ".debug" package suffix or "-debug" app version label.
+            // Fallback signing is for testing only; CI debug signatures may differ between runs.
         }
         release {
+            if (System.getenv("ANDROID_KEYSTORE_PATH") != null) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
         }
     }
@@ -28,4 +45,8 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation "androidx.core:core:1.15.0"
 }
