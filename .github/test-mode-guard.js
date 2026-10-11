@@ -10,7 +10,7 @@ function showNotice(title, message) {
     '<main style="max-width:700px;margin:10vh auto;padding:28px;border:1px solid #334155;border-radius:18px;background:#111827;color:#f8fafc;font:16px/1.6 system-ui,sans-serif">' +
     '<h1 style="margin-top:0">' + title + '</h1><p>' + message + '</p>' +
     '<a style="color:#7dd3fc" href="https://hannonuppi.github.io/Tobiservices-Account/account.html">Zurück zu TobiServices</a></main>';
-  document.body.style.visibility = "visible";
+  document.body.style.setProperty("visibility", "visible", "important");
 }
 
 function blockCompatWrites() {
@@ -77,5 +77,5 @@ onUser(async (user, profile) => {
     showNotice("Kein Testzugriff", "Für dieses Konto wurde der Test Mode nicht freigeschaltet.");
     return;
   }
-  document.body.style.visibility = "visible";
+  document.body.style.setProperty("visibility", "visible", "important");
 });
