@@ -146,6 +146,16 @@ jobs:
           PY
           git worktree remove --force "$PROD_DIR"
 
+      - name: Bundle latest APK for direct download from the account page
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+            "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/UntisNext.apk" \
+            --output dist/UntisNext.apk
+          test -s dist/UntisNext.apk
+          test "$(stat -c%s dist/UntisNext.apk)" -gt 100000
+
       - name: Apply live feature access guard
         run: python3 .github/inject-live-guard.py
 
