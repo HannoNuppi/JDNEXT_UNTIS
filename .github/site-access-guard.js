@@ -6,7 +6,7 @@ import {
 } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js";
 
 function revealSite() {
-  document.body.style.visibility = "visible";
+  document.body.style.setProperty("visibility", "visible", "important");
 }
 
 function showAccessDenied(message) {
