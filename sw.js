@@ -1,4 +1,4 @@
-const CACHE_NAME = "untis-next-shell-v12";
+const CACHE_NAME = "untis-next-shell-v13";
 const APP_SHELL = [
   "./",
   "./index.html",
