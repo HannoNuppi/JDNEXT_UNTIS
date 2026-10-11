@@ -20,7 +20,7 @@ Ein TobiServices-Konto ist nicht erforderlich, um den Stundenplan oder öffentli
 
 ## Themes und Wartungsbypass
 
-Die Theme-Auswahl enthält das kostenlose Grundtheme **Next** und sieben weitere Themes für jeweils **10 Goldmünzen**. Käufe werden atomar im Projekt `tobiservices` verbucht: Der Kontostand wird um 10 reduziert und das Theme-Inventar erweitert. Die eigene Theme-Auswahl wird im TobiServices-Profil gespeichert und zwischen Geräten synchronisiert.
+Die Theme-Auswahl enthält das kostenlose Grundtheme **Next**, sieben Standard-Themes für je **10 Goldmünzen** und vier Premium-Themes: **Royal Rebels** (märchenhafte, rebellische Fantasy) und **Bronze** für je **50**, **Silber** für **70** sowie **Gold** für **100 Goldmünzen**. Die Preise werden nicht nur in der Oberfläche angezeigt: Firestore Rules kontrollieren den festgelegten Preis und die atomare Transaktion aus Goldabzug, Theme-Inventar (`ownedThemes`) und Kaufereignis. Gekaufte Theme-IDs und das ausgerüstete Theme bleiben im TobiServices-Profil gespeichert und werden geräteübergreifend synchronisiert.
 
 Admins können während des Wartungsmodus in der Wartungsansicht den **Admin-Wartungsbypass** ein- oder ausschalten. Das funktioniert nur für aktive TobiServices-Profile mit dem Tag `admin`; die Umschaltung wird im eigenen Profilfeld `maintenanceBypass` gespeichert.
 
