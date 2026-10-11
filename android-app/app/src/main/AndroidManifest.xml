@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false"
+        android:label="Untis Next"
+        android:icon="@drawable/ic_theme_next"
+        android:theme="@style/AppTheme"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity-alias
+            android:name=".ThemeIconNext"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@drawable/ic_theme_next"
+            android:label="Untis Next"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconOcean" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_ocean" android:label="Untis Next – Ocean" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconSunset" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_sunset" android:label="Untis Next – Sunset" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconForest" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_forest" android:label="Untis Next – Forest" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconCandy" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_candy" android:label="Untis Next – Candy" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconMidnight" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_midnight" android:label="Untis Next – Midnight" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconAurora" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_aurora" android:label="Untis Next – Aurora" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconRetro" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_retro" android:label="Untis Next – Retro" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconRoyalRebels" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_royalrebels" android:label="Untis Next – Royal Rebels" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconBronze" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_bronze" android:label="Untis Next – Bronze" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconSilver" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_silver" android:label="Untis Next – Silber" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".ThemeIconGold" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_gold" android:label="Untis Next – Gold" android:launchMode="singleTask">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
+    </application>
+</manifest>
