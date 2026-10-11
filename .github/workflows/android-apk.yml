@@ -22,6 +22,12 @@ jobs:
   build-apk:
     name: Build installable APK
     runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -47,17 +53,66 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build installable APK
+      - name: Prepare persistent APK signing key
+        shell: bash
         run: |
-          gradle --no-daemon --project-dir android-app assembleDebug
+          if [ -n "${ANDROID_KEYSTORE_BASE64}" ]; then
+            test -n "${ANDROID_KEYSTORE_PASSWORD}" || { echo "ANDROID_KEYSTORE_PASSWORD secret is missing"; exit 1; }
+            test -n "${ANDROID_KEY_ALIAS}" || { echo "ANDROID_KEY_ALIAS secret is missing"; exit 1; }
+            test -n "${ANDROID_KEY_PASSWORD}" || { echo "ANDROID_KEY_PASSWORD secret is missing"; exit 1; }
+            echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "$GITHUB_WORKSPACE/untis-next-upload.jks"
+            test -s "$GITHUB_WORKSPACE/untis-next-upload.jks"
+            echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/untis-next-upload.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build with persistent release signature
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          gradle --no-daemon --project-dir android-app assembleRelease \
+            -PappVersionCode="$GITHUB_RUN_NUMBER" \
+            -PappVersionName="1.0.$GITHUB_RUN_NUMBER"
+          mkdir -p dist
+          cp android-app/app/build/outputs/apk/release/app-release.apk dist/UntisNext.apk
+
+      - name: Build test APK when no persistent key is configured
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
+        run: |
+          gradle --no-daemon --project-dir android-app assembleDebug \
+            -PappVersionCode="$GITHUB_RUN_NUMBER" \
+            -PappVersionName="1.0.$GITHUB_RUN_NUMBER"
           mkdir -p dist
           cp android-app/app/build/outputs/apk/debug/app-debug.apk dist/UntisNext.apk
 
-      - name: Upload APK as workflow artifact
+      - name: Create updater metadata with APK and signer fingerprints
+        shell: bash
+        run: |
+          APK_SHA256="$(sha256sum dist/UntisNext.apk | awk '{print $1}')"
+          SIGNER_SHA256="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs dist/UntisNext.apk | awk -F': ' '/certificate SHA-256 digest:/ {print $2; exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test -n "$APK_SHA256"
+          test -n "$SIGNER_SHA256"
+          if [ -n "${ANDROID_KEYSTORE_PATH:-}" ]; then SIGNING_MODE="stable"; else SIGNING_MODE="development"; fi
+          export APK_SHA256 SIGNER_SHA256 SIGNING_MODE
+          python3 - <<'PY'
+          import json, os
+          run_number = int(os.environ["GITHUB_RUN_NUMBER"])
+          metadata = {
+              "versionCode": run_number,
+              "versionName": f"1.0.{run_number}",
+              "apkUrl": "https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/download/android-apk/UntisNext.apk",
+              "sha256": os.environ["APK_SHA256"],
+              "signerSha256": os.environ["SIGNER_SHA256"],
+              "signingMode": os.environ["SIGNING_MODE"],
+          }
+          with open("dist/update.json", "w", encoding="utf-8") as output:
+              json.dump(metadata, output, ensure_ascii=False, separators=(",", ":"))
+              output.write("\\n")
+          PY
+
+      - name: Upload APK and updater metadata as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: UntisNext-APK
-          path: dist/UntisNext.apk
+          path: dist/*
           if-no-files-found: error
           retention-days: 30
 
@@ -66,7 +121,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release delete-asset android-apk app-debug.apk --yes || true
 
-      - name: Publish latest APK download
+      - name: Publish latest APK and updater metadata
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-apk
@@ -74,9 +129,12 @@ jobs:
           name: Untis Next – Android APK
           body: |
             Installierbares Android-APK von Untis Next.
-            Die App-Version und der Dateiname enthalten keinen Debug-Zusatz.
-            Dies ist weiterhin ein Test-Build mit Android-Entwicklungssignatur und kein Play-Store-Release.
+            Die APK prüft beim Start auf Updates und verifiziert Download-Prüfsumme sowie Signaturschlüssel.
+            Für nahtlose Updates muss der permanente Signaturschlüssel als GitHub-Actions-Secrets eingerichtet sein.
+            Ohne diese Secrets ist die APK ein Test-Build mit Entwicklungssignatur; Android kann sie nicht automatisch über Builds mit abweichendem Schlüssel aktualisieren.
           prerelease: true
           make_latest: false
           overwrite_files: true
-          files: dist/UntisNext.apk
+          files: |
+            dist/UntisNext.apk
+            dist/update.json
