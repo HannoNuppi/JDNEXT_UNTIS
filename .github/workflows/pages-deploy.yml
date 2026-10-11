@@ -143,6 +143,9 @@ jobs:
           PY
           git worktree remove --force "$PROD_DIR"
 
+      - name: Apply live feature access guard
+        run: python3 .github/inject-live-guard.py
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
