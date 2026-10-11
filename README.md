@@ -1,4 +1,4 @@
-# JDNEXT UNTIS
+# Untis Next UNTIS
 
 A/B-Wochen-Stundenplan mit gemeinsamen Hausaufgaben als PWA.
 
@@ -6,7 +6,7 @@ A/B-Wochen-Stundenplan mit gemeinsamen Hausaufgaben als PWA.
 
 Der Stundenplan, Klassenarbeiten und alte Daten bleiben im ursprünglichen Firebase-Projekt **`next-untis-plus`**. Neue Hausaufgaben und Meldungen werden im **TobiServices-Firestore-Projekt `tobiservices`** gespeichert, damit Firestore Rules Post, Report und gemeinsames Guthaben in atomaren Transaktionen prüfen können.
 
-Hausaufgaben sind öffentlich lesbar. Posten und melden geht auch ohne TobiServices-Konto; dafür verwendet JDNEXT eine anonyme Firebase-Identität im TobiServices-Projekt. Ein angemeldeter, nicht gesperrter TobiServices-Account erhält bei einem neuen Eintrag `+10` Goldmünzen. Nach zwei Meldungen von unterschiedlichen Firebase-Identitäten wird der Eintrag entfernt und für einen zugeordneten TobiServices-Autor werden `20` Goldmünzen abgezogen.
+Hausaufgaben sind öffentlich lesbar. Posten und melden geht auch ohne TobiServices-Konto; dafür verwendet Untis Next eine anonyme Firebase-Identität im TobiServices-Projekt. Ein angemeldeter, nicht gesperrter TobiServices-Account erhält bei einem neuen Eintrag `+10` Goldmünzen. Nach zwei Meldungen von unterschiedlichen Firebase-Identitäten wird der Eintrag entfernt und für einen zugeordneten TobiServices-Autor werden `20` Goldmünzen abgezogen.
 
 Schon vorhandene Einträge im alten Projekt bleiben sichtbar, sind aber aus Kompatibilitätsgründen schreibgeschützt. Neue Einträge werden im TobiServices-Projekt angelegt.
 
@@ -42,7 +42,7 @@ Die App kann direkt über GitHub Pages betrieben und als PWA installiert werden.
 
 ## Erstinitialisierung der Firestore-Datenstruktur
 
-Für die optionale Legacy-Discord-Bildfunktion legt das JDNEXT-Backend Schema-Hinweise an. Neue Hausaufgaben, Reports und Münzereignisse entstehen dagegen direkt im TobiServices-Firestore, sobald ein echter Eintrag geschrieben wird.
+Für die optionale Legacy-Discord-Bildfunktion legt das Untis Next-Backend Schema-Hinweise an. Neue Hausaufgaben, Reports und Münzereignisse entstehen dagegen direkt im TobiServices-Firestore, sobald ein echter Eintrag geschrieben wird.
 
 Siehe [FIREBASE_SCHEMA.md](FIREBASE_SCHEMA.md) für konkrete Feldformate.
 
@@ -50,7 +50,7 @@ Siehe [FIREBASE_SCHEMA.md](FIREBASE_SCHEMA.md) für konkrete Feldformate.
 
 Neue Hausaufgabenbilder werden lokal im Browser auf maximal etwa 560 KiB komprimiert und als eigene Firestore-Dokumente im TobiServices-Projekt gespeichert. Damit bleiben sie unter der Firestore-Grenze pro Dokument; bis zu drei Bilder pro Aufgabe sind möglich. Für diese neuen Uploads sind weder Discord noch Cloud Functions oder ein Blaze-Tarif nötig.
 
-Bereits vorhandene Einträge aus `next-untis-plus` können noch Discord-Attachment-IDs enthalten. Nur diese alten Bilder benötigen zum Auflösen der Discord-URLs weiterhin die bisherige JDNEXT-Cloud Function; neue Uploads verwenden den direkten Firestore-Weg.
+Bereits vorhandene Einträge aus `next-untis-plus` können noch Discord-Attachment-IDs enthalten. Nur diese alten Bilder benötigen zum Auflösen der Discord-URLs weiterhin die bisherige Untis Next-Cloud Function; neue Uploads verwenden den direkten Firestore-Weg.
 
 ## Kontosperre
 
