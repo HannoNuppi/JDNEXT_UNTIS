@@ -332,7 +332,11 @@ const THEME_CATALOG = [
   {id:"Candy",name:"Candy Pop",price:10,description:"Süße Neonfarben in Pink und Türkis",bgA:"#260e35",bgB:"#4a1651",bgC:"#7d205e",pink:"#ff5fb7",cyan:"#83eaff",gold:"#ffe37f",violet:"#b35cff"},
   {id:"Midnight",name:"Midnight Club",price:10,description:"Dunkles Indigo mit kühlen Lichtakzenten",bgA:"#070b19",bgB:"#15172d",bgC:"#292044",pink:"#9e8cff",cyan:"#78aaff",gold:"#d4deff",violet:"#6c5de8"},
   {id:"Aurora",name:"Aurora Glow",price:10,description:"Polarlicht aus Türkis, Lila und Magenta",bgA:"#071a35",bgB:"#1d1a50",bgC:"#234c61",pink:"#f08dff",cyan:"#6bffe4",gold:"#ffef9a",violet:"#736fff"},
-  {id:"Retro",name:"Retro Arcade",price:10,description:"Arcade-Nostalgie mit warmen Neonfarben",bgA:"#20152b",bgB:"#41264f",bgC:"#78405e",pink:"#ff945e",cyan:"#70e1c2",gold:"#f4d35e",violet:"#c45aa2"}
+  {id:"Retro",name:"Retro Arcade",price:10,description:"Arcade-Nostalgie mit warmen Neonfarben",bgA:"#20152b",bgB:"#41264f",bgC:"#78405e",pink:"#ff945e",cyan:"#70e1c2",gold:"#f4d35e",violet:"#c45aa2"},
+  {id:"RoyalRebels",name:"Royal Rebels",price:50,description:"Dunkle Märchen-Fantasy mit Königsblau, Violett und rebellischem Pink",bgA:"#160d22",bgB:"#45203f",bgC:"#15365e",pink:"#ff477e",cyan:"#70dfff",gold:"#e6b8ff",violet:"#9b52c9"},
+  {id:"Bronze",name:"Bronze",price:50,description:"Warme Bronze-, Kupfer- und Schokoladentöne",bgA:"#1d130c",bgB:"#50301c",bgC:"#80502d",pink:"#e4a16e",cyan:"#d9b38f",gold:"#efbf7b",violet:"#99613f"},
+  {id:"Silver",name:"Silber",price:70,description:"Kühles Silber mit Stahlblau und klaren Lichtakzenten",bgA:"#111722",bgB:"#303b50",bgC:"#66758e",pink:"#d8e0f2",cyan:"#9ae9ff",gold:"#f0f4ff",violet:"#91a6d8"},
+  {id:"Gold",name:"Gold",price:100,description:"Edles Gold mit Bernstein und leuchtenden Champagner-Tönen",bgA:"#201706",bgB:"#593b0d",bgC:"#8c6819",pink:"#ffd36b",cyan:"#fff0a6",gold:"#fff0a6",violet:"#dba64b"}
 ];
 
 /* =====================================================================
@@ -878,6 +882,8 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       if(entrySnap.exists) throw new Error("Dieser Hausaufgabeneintrag existiert bereits.");
 
       let authorTobiUid=null;
+      // Private record of the TobiServices account used for this post, separate from reward eligibility.
+      const authorTobiAccountUid=user.isAnonymous ? null : user.uid;
       let profileRef=null;
       let profileSnap=null;
       if(!user.isAnonymous && profile?.disabled!==true &&
@@ -917,6 +923,7 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       transaction.set(ownerRef,{
         authorAuthUid:user.uid,
         authorTobiUid:authorTobiUid,
+        authorTobiAccountUid:authorTobiAccountUid,
         createdAt:stamp()
       });
       (Array.isArray(images)?images.slice(0,3):[]).forEach(image=>{
@@ -1500,12 +1507,12 @@ function renderThemeMenu(){
   const status=activeTobiUser && !activeTobiProfile
     ? "Dein Kontostand wird geladen…"
     : accountReady
-      ? coins.toLocaleString("de-DE")+" Goldmünzen · Themes kosten je 10 Münzen"
+      ? coins.toLocaleString("de-DE")+" Goldmünzen · Theme-Preise: 10, 50, 70 oder 100"
       : "Käufe werden mit einem angemeldeten TobiServices-Konto gespeichert.";
   modal.innerHTML =
     '<button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>'+
     '<h2>🎨 Themes</h2>'+
-    '<div class="msub">Kaufe weitere Looks für deine Stundenplan-App. Ein Theme kostet 10 Goldmünzen.</div>'+
+    '<div class="msub">Kaufe besondere Looks für deine Stundenplan-App. Jedes Theme zeigt seinen Preis.</div>'+
     '<div class="theme-balance"><span>DEIN GUTHABEN</span><strong>✦ '+escapeHtml(status)+'</strong></div>'+
     '<div class="theme-grid">'+THEME_CATALOG.map(theme=>{
       const hasTheme=owned.has(theme.id);
@@ -1513,16 +1520,16 @@ function renderThemeMenu(){
       let action="login",label="Anmelden zum Kauf",disabled=false,buttonClass="";
       if(isEquipped){action="equipped";label="✓ Ausgerüstet";disabled=true;}
       else if(hasTheme){action="equip";label="Ausrüsten";}
-      else if(accountReady){action="buy";label="✦ Für 10 kaufen";buttonClass=" primary";disabled=coins<10;}
+      else if(accountReady){action="buy";label="✦ Für "+theme.price+" kaufen";buttonClass=" primary";disabled=coins<theme.price;}
       else if(activeTobiUser){action="loading";label="Profil wird geladen…";disabled=true;}
-      const badge=isEquipped?"AUSGERÜSTET":hasTheme?"BESESSEN":theme.price===0?"GRATIS":"10 ✦";
+      const badge=isEquipped?"AUSGERÜSTET":hasTheme?"BESESSEN":theme.price===0?"GRATIS":theme.price+" ✦";
       return '<article class="theme-card">'+
         '<div class="theme-preview" style="--preview-a:'+theme.bgA+';--preview-b:'+theme.bgB+';--preview-c:'+theme.pink+'"></div>'+
         '<div class="theme-card-title"><div><strong>'+escapeHtml(theme.name)+'</strong><small>'+escapeHtml(theme.description)+'</small></div><span class="theme-owned-pill">'+badge+'</span></div>'+
         '<button class="theme-action'+buttonClass+'" type="button" data-theme-action="'+action+'" data-theme-id="'+theme.id+'" '+(disabled?'disabled':'')+'>'+label+'</button>'+
       '</article>';
     }).join("")+'</div>'+
-    '<p class="theme-login-note">Deine gekauften Themes und die aktuelle Auswahl werden im TobiServices-Profil gespeichert. Das Grundtheme Next bleibt kostenlos. Der Kauf reduziert dein echtes Goldguthaben um 10.</p>';
+    '<p class="theme-login-note">Deine gekauften Themes und die aktuelle Auswahl werden dauerhaft im TobiServices-Profil in Firestore gespeichert und nach erneutem Anmelden wieder geladen. Käufe werden zusammen mit dem Abzug atomar geprüft. Das Grundtheme Next bleibt kostenlos.</p>';
   modal.querySelector("#closeModal").onclick=closeModal;
   modal.querySelectorAll("[data-theme-action]").forEach(button=>{
     button.addEventListener("click",async()=>{
@@ -1558,7 +1565,7 @@ async function equipTheme(theme){
   }
 }
 async function purchaseTheme(theme){
-  if(theme.price!==10 || theme.id==="Next"){
+  if(!Number.isSafeInteger(theme.price) || theme.price<=0 || theme.id==="Next"){
     showToast("Dieses Theme ist kostenlos oder nicht käuflich.");
     return;
   }
@@ -1583,26 +1590,26 @@ async function purchaseTheme(theme){
       const coins=Number.isSafeInteger(profile.goldCoins)?profile.goldCoins:0;
       const owned=Array.isArray(profile.ownedThemes)?profile.ownedThemes:[];
       if(owned.includes(theme.id)) return {alreadyOwned:true,coins,owned};
-      if(coins<10) throw new Error("Du brauchst mindestens 10 Goldmünzen für dieses Theme.");
+      if(coins<theme.price) throw new Error("Du brauchst mindestens "+theme.price+" Goldmünzen für dieses Theme.");
       const nextOwned=[...owned,theme.id];
       transaction.update(profileRef,{
-        goldCoins:coins-10,
+        goldCoins:coins-theme.price,
         ownedThemes:nextOwned,
         lastProfileChangeAt:stamp(),
         lastJdnextCoinEventId:eventId
       });
       transaction.set(eventRef,{
         uid:activeTobiUser.uid,
-        amount:-10,
+        amount:-theme.price,
         type:"theme-purchase",
         themeId:theme.id,
         createdAt:stamp()
       });
-      return {alreadyOwned:false,coins:coins-10,owned:nextOwned};
+      return {alreadyOwned:false,coins:coins-theme.price,owned:nextOwned};
     });
     activeTobiProfile={...activeTobiProfile,goldCoins:result.coins,ownedThemes:result.owned};
     updateTobiLoginButton();
-    showToast(result.alreadyOwned?"Dieses Theme gehört dir bereits.":"🎨 "+theme.name+" gekauft · −10 Goldmünzen");
+    showToast(result.alreadyOwned?"Dieses Theme gehört dir bereits.":"🎨 "+theme.name+" gekauft · −"+theme.price+" Goldmünzen");
     renderThemeMenu();
   }catch(error){
     console.error("Theme purchase failed:",error);
