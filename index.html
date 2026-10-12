@@ -259,7 +259,7 @@
     linear-gradient(160deg,var(--bg-a),var(--bg-b) 55%,var(--bg-c))}
   @keyframes halloweenGlow{0%,100%{text-shadow:0 0 7px rgba(255,115,40,.35)}50%{text-shadow:0 0 14px rgba(197,120,255,.75)}}
   html[data-jdnext-theme="halloweenevent"] .logo-main span{animation:halloweenGlow 3s ease-in-out infinite}
-  @media(prefers-reduced-motion:reduce){#matrixRain{display:none!important}html[data-jdnext-theme="halloweenevent"] .logo-main span{animation:none}}
+  @media(prefers-reduced-motion:reduce){html[data-jdnext-theme="halloweenevent"] .logo-main span{animation:none}}
 
 </style>
 </head>
@@ -1780,18 +1780,39 @@ function resizeMatrixCanvas(){
   );
   matrixCanvasReady=true;
 }
+function drawStaticMatrixRain(){
+  if(!matrixCanvas||!matrixContext||!matrixCanvasReady) return;
+  const ctx=matrixContext;
+  ctx.clearRect(0,0,window.innerWidth,window.innerHeight);
+  ctx.font="13px ui-monospace,Consolas,monospace";
+  const glyphs="01アカサタナハマヤラワЖΣЖ";
+  const rows=Math.ceil(window.innerHeight/matrixCellSize);
+  for(let column=0;column<matrixColumns.length;column++){
+    const x=column*matrixCellSize;
+    for(let row=0;row<rows;row+=2){
+      ctx.fillStyle=row%6===0?"rgba(217,255,228,0.78)":"rgba(53,255,117,0.26)";
+      ctx.fillText(glyphs[Math.floor(Math.random()*glyphs.length)],x,row*matrixCellSize);
+    }
+  }
+}
 function setMatrixRainActive(enabled){
   if(!matrixCanvas||!matrixContext) return;
   const reduceMotion=window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const active=Boolean(enabled&&!reduceMotion);
+  const active=Boolean(enabled);
   matrixCanvas.hidden=!active;
   if(active){
     // A canvas defaults to 300×150; checking width===0 skips initialization.
     if(!matrixCanvasReady || !matrixColumns.length) resizeMatrixCanvas();
+    if(reduceMotion){
+      if(matrixFrame){cancelAnimationFrame(matrixFrame);matrixFrame=0;}
+      drawStaticMatrixRain();
+      return;
+    }
     if(!matrixFrame) matrixFrame=requestAnimationFrame(drawMatrixRain);
   }else if(matrixFrame){
     cancelAnimationFrame(matrixFrame);
     matrixFrame=0;
+    matrixContext.clearRect(0,0,window.innerWidth,window.innerHeight);
   }
 }
 function drawMatrixRain(time){
@@ -1819,7 +1840,15 @@ function drawMatrixRain(time){
   }
   matrixFrame=requestAnimationFrame(drawMatrixRain);
 }
-window.addEventListener("resize",()=>{if(!matrixCanvas?.hidden)resizeMatrixCanvas();},{passive:true});
+window.addEventListener("resize",()=>{
+  if(!matrixCanvas?.hidden){
+    resizeMatrixCanvas();
+    if(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) drawStaticMatrixRain();
+  }
+},{passive:true});
+window.matchMedia?.("(prefers-reduced-motion: reduce)").addEventListener?.("change",()=>{
+  if(document.documentElement.dataset.jdnextTheme==="adminmatrix") setMatrixRainActive(true);
+});
 document.addEventListener("visibilitychange",()=>{
   if(document.hidden && matrixFrame){cancelAnimationFrame(matrixFrame);matrixFrame=0;}
   else if(!document.hidden && document.documentElement.dataset.jdnextTheme==="adminmatrix") setMatrixRainActive(true);
