@@ -60,7 +60,7 @@ public final class MainActivity extends Activity {
     private static final Set<String> THEME_IDS = new HashSet<>(Arrays.asList(
         "Next", "Ocean", "Sunset", "Forest", "Candy", "Midnight",
         "Aurora", "Retro", "RoyalRebels", "Bronze", "Silver", "Gold",
-        "WinterEvent", "BirthdayEvent"
+        "WinterEvent", "BirthdayEvent", "AdminMatrix", "HalloweenEvent"
     ));
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
