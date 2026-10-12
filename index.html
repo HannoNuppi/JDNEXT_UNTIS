@@ -144,7 +144,6 @@
     display:none; align-items:center; justify-content:center; z-index:50; padding:16px;
   }
   .overlay.show{display:flex;}
-  body.maintenance-pending .wrap{visibility:hidden;}
   .maintenance-overlay{
     position:fixed; inset:0; display:none; align-items:center; justify-content:center;
     z-index:100; padding:24px; background:rgba(5,6,20,.86); backdrop-filter:blur(8px);
@@ -246,9 +245,28 @@
   .themebtn{border-color:color-mix(in srgb,var(--cyan) 45%,transparent);color:var(--cyan);background:color-mix(in srgb,var(--cyan) 9%,transparent)}
   @media(max-width:520px){.theme-grid{grid-template-columns:1fr}.theme-preview{height:50px}.maintenance-bypass-btn{width:100%}}
 
+  /* Matrix remains inactive unless the Admin Matrix theme is selected. */
+  #matrixRain{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.43;mix-blend-mode:screen}
+  #matrixRain[hidden]{display:none}
+  html[data-jdnext-theme="adminmatrix"] body{background:#010604}
+  html[data-jdnext-theme="adminmatrix"] body::before{opacity:.1}
+  html[data-jdnext-theme="adminmatrix"] .tt-wrap,
+  html[data-jdnext-theme="adminmatrix"] .weeknav,
+  html[data-jdnext-theme="adminmatrix"] .theme-card{backdrop-filter:blur(3px);border-color:rgba(50,255,115,.28)}
+  html[data-jdnext-theme="adminmatrix"] .logo-main span{text-shadow:0 0 12px rgba(50,255,115,.7);filter:none}
+  html[data-jdnext-theme="adminmatrix"] .weekpill{background:linear-gradient(90deg,#064d20,#0a8f37);box-shadow:0 0 12px rgba(50,255,115,.22)}
+  html[data-jdnext-theme="halloweenevent"] body{background:
+    radial-gradient(900px 600px at 85% -10%,rgba(139,55,200,.28),transparent 62%),
+    radial-gradient(900px 650px at -10% 110%,rgba(255,105,25,.24),transparent 60%),
+    linear-gradient(160deg,var(--bg-a),var(--bg-b) 55%,var(--bg-c))}
+  @keyframes halloweenGlow{0%,100%{text-shadow:0 0 7px rgba(255,115,40,.35)}50%{text-shadow:0 0 14px rgba(197,120,255,.75)}}
+  html[data-jdnext-theme="halloweenevent"] .logo-main span{animation:halloweenGlow 3s ease-in-out infinite}
+  @media(prefers-reduced-motion:reduce){#matrixRain{display:none!important}html[data-jdnext-theme="halloweenevent"] .logo-main span{animation:none}}
+
 </style>
 </head>
 <body class="maintenance-pending">
+<canvas id="matrixRain" aria-hidden="true" hidden></canvas>
 <div class="wrap">
   <div class="topbar">
     <div class="logo">
@@ -352,11 +370,13 @@ const THEME_CATALOG = [
   {id:"Gold",name:"Gold",price:100,description:"Gold, Bernstein und Champagner · goldener Glitzer-Trail",trail:["✦","✧","★"],bgA:"#201706",bgB:"#593b0d",bgC:"#8c6819",pink:"#ffd36b",cyan:"#fff0a6",gold:"#fff0a6",violet:"#dba64b"}
 ];
 
-// Event-only themes are intentionally excluded from the public catalog.
-// They become visible only when an admin has granted their ID to the account.
+// Versteckte Themes werden nur angezeigt, wenn sie im Profil freigeschaltet sind
+// oder durch einen aktuellen Admin-Tag abgeleitet werden.
 const EVENT_THEMES = [
   {id:"WinterEvent",name:"Winterwunder",price:0,description:"Festliches Mitternachtsblau, Eislicht und winterlicher Sternen-Trail",trail:["❄","✦","🎄"],bgA:"#07172c",bgB:"#12345c",bgC:"#7cbbd9",pink:"#bceaff",cyan:"#e6fbff",gold:"#ffe7a3",violet:"#8dbcf5",eventOnly:true},
-  {id:"BirthdayEvent",name:"Birthday Bash",price:0,description:"Festlicher Roségold-Glow mit Konfetti- und Ballon-Trail",trail:["🎈","✦","🎉"],bgA:"#2a1230",bgB:"#71385e",bgC:"#d98b9d",pink:"#ff91c8",cyan:"#9df7ed",gold:"#ffe1a0",violet:"#c68bff",eventOnly:true}
+  {id:"BirthdayEvent",name:"Birthday Bash",price:0,description:"Festlicher Roségold-Glow mit Konfetti- und Ballon-Trail",trail:["🎈","✦","🎉"],bgA:"#2a1230",bgB:"#71385e",bgC:"#d98b9d",pink:"#ff91c8",cyan:"#9df7ed",gold:"#ffe1a0",violet:"#c68bff",eventOnly:true},
+  {id:"AdminMatrix",name:"Admin Matrix",price:0,description:"Exklusiv für den admin-Tag · animierter grüner Matrix-Code mit Neon-Glow",trail:["0","1","⌁","∑"],bgA:"#010604",bgB:"#03150a",bgC:"#06421c",pink:"#48ff83",cyan:"#b8ffca",gold:"#e4ffe9",violet:"#12b84e",eventOnly:true,adminOnly:true},
+  {id:"HalloweenEvent",name:"Halloween Afterdark",price:0,description:"Kürbis-Orange, Geisterviolett und ein Fledermaus-Trail · Freischaltung am 31. Oktober",trail:["🦇","🎃","✦"],bgA:"#15091e",bgB:"#381343",bgC:"#7b2a20",pink:"#ff823d",cyan:"#d6a0ff",gold:"#ffc16b",violet:"#9849c4",eventOnly:true,halloweenOnly:true}
 ];
 
 /* =====================================================================
@@ -1416,8 +1436,10 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
-document.getElementById("loginBtn").onclick=()=>{
-  location.href=activeTobiUser ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
+document.getElementById("loginBtn").onclick=async()=>{
+  try{await Promise.race([tobiAuthReady,new Promise(resolve=>setTimeout(resolve,900))]);}catch{}
+  const signedIn=Boolean(activeTobiUser || accountCoreUid || (tobiAuth.currentUser&&!tobiAuth.currentUser.isAnonymous));
+  location.href=signedIn ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
 };
 
 document.getElementById("maintenanceBypassBtn").onclick=async()=>{
@@ -1464,35 +1486,142 @@ function updateTobiLoginButton(){
   }
 }
 
-tobiAuth.onAuthStateChanged(async user=>{
+let accountCoreReported=false;
+let accountCoreUid=null;
+let tobiProfileWatchedUid=null;
+
+function stopTobiProfileWatch(){
+  if(tobiProfileUnsubscribe){try{tobiProfileUnsubscribe();}catch{}}
+  tobiProfileUnsubscribe=null;
+  tobiProfileWatchedUid=null;
+}
+function handleTobiProfileSnapshot(snapshot){
+  activeTobiProfile=snapshot.exists?(snapshot.data()||{}):null;
+  if(activeTobiProfile?.disabled===true){
+    showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
+  }
+  updateTobiLoginButton();
+  applyTheme(currentEquippedTheme());
+  renderMaintenanceBypassButton();
+  refreshMaintenanceAccess();
+  if(activeTobiProfile && activeTobiUser && activeTobiProfile.disabled!==true){
+    void maybeUnlockHalloweenTheme(activeTobiUser.uid);
+  }
+}
+function watchTobiProfile(uid){
+  if(!uid || tobiProfileWatchedUid===uid) return;
+  stopTobiProfileWatch();
+  tobiProfileWatchedUid=uid;
+  tobiProfileUnsubscribe=tobiDb.collection("users").doc(uid).onSnapshot(
+    handleTobiProfileSnapshot,
+    error=>{
+      console.warn("TobiServices-Profil konnte in Untis Next nicht live synchronisiert werden:",error);
+      // Behalte das bereits vom gemeinsamen Account-Core geladene Profil vorerst bei.
+      updateTobiLoginButton();
+      renderMaintenanceBypassButton();
+      refreshMaintenanceAccess();
+    }
+  );
+}
+
+tobiAuth.onAuthStateChanged(user=>{
+  if(accountCoreReported && accountCoreUid && (!user || user.isAnonymous || user.uid!==accountCoreUid)){
+    return;
+  }
+  if(accountCoreReported && !accountCoreUid && user && !user.isAnonymous){
+    // The Compat callback may hydrate before the modular account core does.
+    accountCoreReported=false;
+  }
   activeTobiUser=user&&!user.isAnonymous?user:null;
-  activeTobiProfile=null;
-  if(tobiProfileUnsubscribe){try{tobiProfileUnsubscribe();}catch{} tobiProfileUnsubscribe=null;}
+  if(!activeTobiUser) activeTobiProfile=null;
   if(!tobiAuthInitialized){
     tobiAuthInitialized=true;
     resolveTobiAuthReady(user);
   }
   updateTobiLoginButton();
-  applyTheme(activeTobiUser ? "Next" : (localStorage.getItem("jdnextTheme")||"Next"));
+  if(activeTobiUser) watchTobiProfile(activeTobiUser.uid);
+  else{
+    stopTobiProfileWatch();
+    applyTheme(localStorage.getItem("jdnextTheme")||"Next");
+  }
   renderMaintenanceBypassButton();
   refreshMaintenanceAccess();
-  if(!user||user.isAnonymous) return;
+});
 
-  tobiProfileUnsubscribe=tobiDb.collection("users").doc(user.uid).onSnapshot(snapshot=>{
-    activeTobiProfile=snapshot.exists?(snapshot.data()||{}):null;
-    if(activeTobiProfile?.disabled===true){
-      showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
-    }
+window.addEventListener("tobiservices-account-session",event=>{
+  const detail=event.detail||{};
+  const user=detail.user||null;
+  const profile=detail.profile||null;
+  accountCoreReported=true;
+  if(user?.uid && !user.isAnonymous){
+    accountCoreUid=user.uid;
+    activeTobiUser={uid:user.uid,email:user.email||"",displayName:user.displayName||"",isAnonymous:false};
+    activeTobiProfile=profile;
     updateTobiLoginButton();
-    applyTheme(activeTobiProfile?.equippedTheme || "Next");
+    applyTheme(currentEquippedTheme());
     renderMaintenanceBypassButton();
     refreshMaintenanceAccess();
-  },error=>{
-    console.warn("TobiServices-Guthaben konnte nicht geladen werden:",error);
+    watchTobiProfile(user.uid);
+    if(profile && profile.disabled!==true) void maybeUnlockHalloweenTheme(user.uid);
+  }else{
+    const compatUser=tobiAuth.currentUser;
+    if(compatUser&&!compatUser.isAnonymous){
+      accountCoreUid=compatUser.uid;
+      activeTobiUser=compatUser;
+      watchTobiProfile(compatUser.uid);
+      return;
+    }
+    accountCoreUid=null;
+    activeTobiUser=null;
     activeTobiProfile=null;
+    stopTobiProfileWatch();
+    updateTobiLoginButton();
+    applyTheme(localStorage.getItem("jdnextTheme")||"Next");
     renderMaintenanceBypassButton();
     refreshMaintenanceAccess();
-  });
+  }
+});
+
+function localDateIsHalloween(){
+  const now=new Date();
+  return now.getMonth()===9 && now.getDate()===31;
+}
+async function maybeUnlockHalloweenTheme(uid){
+  if(!uid || !localDateIsHalloween() || !activeTobiProfile || activeTobiProfile.disabled===true) return;
+  if(Array.isArray(activeTobiProfile.ownedThemes) && activeTobiProfile.ownedThemes.includes("HalloweenEvent")) return;
+  try{
+    const ref=tobiDb.collection("users").doc(uid);
+    const unlocked=await tobiDb.runTransaction(async transaction=>{
+      const snap=await transaction.get(ref);
+      if(!snap.exists) return false;
+      const profile=snap.data()||{};
+      if(profile.disabled===true) return false;
+      const oldOwned=Array.isArray(profile.ownedThemes)?profile.ownedThemes:[];
+      if(oldOwned.includes("HalloweenEvent")) return false;
+      transaction.update(ref,{
+        ownedThemes:[...oldOwned,"HalloweenEvent"],
+        halloweenUnlockedAt:firebase.firestore.FieldValue.serverTimestamp(),
+        lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+      return true;
+    });
+    if(unlocked) showToast("🎃 Halloween-Theme freigeschaltet!");
+  }catch(error){
+    console.warn("Halloween-Freischaltung konnte nicht gespeichert werden. Prüfe die TobiServices-Firestore-Regeln:",error);
+  }
+}
+function scheduleHalloweenUnlockCheck(){
+  const now=new Date();
+  let next=new Date(now.getFullYear(),9,31,0,0,5,0);
+  if(now>=next) next=new Date(now.getFullYear()+1,9,31,0,0,5,0);
+  setTimeout(()=>{
+    if(activeTobiUser) void maybeUnlockHalloweenTheme(activeTobiUser.uid);
+    scheduleHalloweenUnlockCheck();
+  },Math.max(1000,next.getTime()-now.getTime()));
+}
+scheduleHalloweenUnlockCheck();
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden && activeTobiUser) void maybeUnlockHalloweenTheme(activeTobiUser.uid);
 });
 
 function findTheme(themeId){
@@ -1530,14 +1659,81 @@ function applyTheme(themeId){
   if(window.UntisNextAndroid && typeof window.UntisNextAndroid.setThemeIcon==="function"){
     try{window.UntisNextAndroid.setThemeIcon(theme.id);}catch(error){console.warn("Launcher-Icon konnte nicht gewechselt werden:",error);}
   }
+  setMatrixRainActive(theme.id==="AdminMatrix");
 }
+const matrixCanvas=document.getElementById("matrixRain");
+const matrixContext=matrixCanvas?.getContext("2d",{alpha:true});
+let matrixFrame=0;
+let matrixLastDraw=0;
+let matrixColumns=[];
+let matrixCellSize=18;
+function resizeMatrixCanvas(){
+  if(!matrixCanvas||!matrixContext) return;
+  const ratio=Math.min(window.devicePixelRatio||1,2);
+  matrixCanvas.width=Math.max(1,Math.floor(window.innerWidth*ratio));
+  matrixCanvas.height=Math.max(1,Math.floor(window.innerHeight*ratio));
+  matrixCanvas.style.width=window.innerWidth+"px";
+  matrixCanvas.style.height=window.innerHeight+"px";
+  matrixContext.setTransform(ratio,0,0,ratio,0,0);
+  matrixColumns=Array.from({length:Math.ceil(window.innerWidth/matrixCellSize)},()=>Math.floor(Math.random()*-35));
+}
+function setMatrixRainActive(enabled){
+  if(!matrixCanvas||!matrixContext) return;
+  const reduceMotion=window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const active=Boolean(enabled&&!reduceMotion);
+  matrixCanvas.hidden=!active;
+  if(active){
+    if(!matrixCanvas.width) resizeMatrixCanvas();
+    if(!matrixFrame) matrixFrame=requestAnimationFrame(drawMatrixRain);
+  }else if(matrixFrame){
+    cancelAnimationFrame(matrixFrame);
+    matrixFrame=0;
+  }
+}
+function drawMatrixRain(time){
+  matrixFrame=0;
+  if(document.documentElement.dataset.jdnextTheme!=="adminmatrix" ||
+     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ||
+     document.hidden) return;
+  if(time-matrixLastDraw<45){
+    matrixFrame=requestAnimationFrame(drawMatrixRain);
+    return;
+  }
+  matrixLastDraw=time;
+  const ctx=matrixContext;
+  ctx.fillStyle="rgba(1,6,4,0.13)";
+  ctx.fillRect(0,0,window.innerWidth,window.innerHeight);
+  ctx.font="13px ui-monospace,Consolas,monospace";
+  const glyphs="01アカサタナハマヤラワЖΣЖ";
+  for(let column=0;column<matrixColumns.length;column++){
+    const x=column*matrixCellSize;
+    const y=matrixColumns[column]*matrixCellSize;
+    ctx.fillStyle=Math.random()>.91?"#d9ffe4":"#35ff75";
+    ctx.fillText(glyphs[Math.floor(Math.random()*glyphs.length)],x,y);
+    if(y>window.innerHeight && Math.random()>.975) matrixColumns[column]=Math.floor(Math.random()*-25);
+    else matrixColumns[column]++;
+  }
+  matrixFrame=requestAnimationFrame(drawMatrixRain);
+}
+window.addEventListener("resize",()=>{if(!matrixCanvas?.hidden)resizeMatrixCanvas();},{passive:true});
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden && matrixFrame){cancelAnimationFrame(matrixFrame);matrixFrame=0;}
+  else if(!document.hidden && document.documentElement.dataset.jdnextTheme==="adminmatrix") setMatrixRainActive(true);
+});
 function getOwnedThemeIds(profile=activeTobiProfile){
   const owned=Array.isArray(profile?.ownedThemes)?profile.ownedThemes:[];
+  if(profile?.disabled!==true && Array.isArray(profile?.tags) && profile.tags.includes("admin")){
+    owned.push("AdminMatrix");
+  }
   return new Set(["Next",...owned]);
 }
 function currentEquippedTheme(){
-  if(activeTobiUser) return findTheme(activeTobiProfile?.equippedTheme||"Next").id;
-  return findTheme(localStorage.getItem("jdnextTheme")||"Next").id;
+  const localTheme=localStorage.getItem("jdnextTheme")||"Next";
+  if(activeTobiUser){
+    if(isTobiAdmin(activeTobiProfile) && localTheme==="AdminMatrix") return findTheme("AdminMatrix").id;
+    return findTheme(activeTobiProfile?.equippedTheme||"Next").id;
+  }
+  return findTheme(localTheme).id;
 }
 
 // Premium cosmetics only: short pointer particles in each theme's palette.
@@ -1617,10 +1813,16 @@ async function equipTheme(theme){
     if(activeTobiUser){
       if(!activeTobiProfile || activeTobiProfile.disabled===true) throw new Error("Dein TobiServices-Konto ist noch nicht bereit oder gesperrt.");
       if(!getOwnedThemeIds().has(theme.id)) throw new Error("Dieses Theme besitzt du noch nicht.");
-      await tobiDb.collection("users").doc(activeTobiUser.uid).update({equippedTheme:theme.id});
-      activeTobiProfile={...activeTobiProfile,equippedTheme:theme.id};
+      if(theme.id==="AdminMatrix"){
+        if(!isTobiAdmin()) throw new Error("Admin Matrix ist nur mit dem aktiven admin-Tag verfügbar.");
+        localStorage.setItem("jdnextTheme","AdminMatrix");
+      }else{
+        await tobiDb.collection("users").doc(activeTobiUser.uid).update({equippedTheme:theme.id});
+        activeTobiProfile={...activeTobiProfile,equippedTheme:theme.id};
+        localStorage.removeItem("jdnextTheme");
+      }
     }else{
-      if(theme.id!=="Next") throw new Error("Melde dich an, um gekaufte Themes zu verwenden.");
+      if(theme.id!=="Next") throw new Error("Melde dich an, um freigeschaltete Themes zu verwenden.");
       localStorage.setItem("jdnextTheme","Next");
     }
     applyTheme(theme.id);
@@ -1767,6 +1969,17 @@ document.getElementById("jumpToday").onclick=()=>{
 renderSetupBanner();
 renderAll();
 startMaintenanceListener();
+</script>
+<script type="module">
+import { onUser } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js";
+onUser((user, profile) => {
+  window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
+    detail: {
+      user: user ? { uid:user.uid, email:user.email||"", displayName:user.displayName||"", isAnonymous:user.isAnonymous===true } : null,
+      profile
+    }
+  }));
+});
 </script>
 </body>
 </html>
