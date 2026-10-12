@@ -35,9 +35,10 @@ self.addEventListener("fetch", event => {
     const update = fetch(event.request).then(response => {
       if (response && response.ok && response.type === "basic") {
         const copy = response.clone();
-        return caches.open(CACHE_NAME).then(cache =>
-          cache.put(event.request, copy)
-        ).then(() => response);
+        // A cache-write failure must not discard a successful network response.
+        void caches.open(CACHE_NAME)
+          .then(cache => cache.put(event.request, copy))
+          .catch(error => console.warn("Navigation cache update failed:", error));
       }
       return response;
     }).catch(() => null);
