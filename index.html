@@ -1523,7 +1523,10 @@ function stopTobiProfileWatch(){
   tobiProfileWatchedUid=null;
 }
 function handleTobiProfileSnapshot(snapshot){
-  activeTobiProfile=snapshot.exists?(snapshot.data()||{}):null;
+  // A profile that the Account Core already supplied is more useful than a
+  // transient empty snapshot; profiles are intentionally never deleted.
+  if(snapshot.exists) activeTobiProfile=snapshot.data()||{};
+  else if(!activeTobiProfile) activeTobiProfile=null;
   if(activeTobiProfile?.disabled===true){
     showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
   }
@@ -1541,8 +1544,15 @@ function watchTobiProfile(uid){
   stopTobiProfileWatch();
   tobiProfileWatchedUid=uid;
   tobiProfileUnsubscribe=tobiDb.collection("users").doc(uid).onSnapshot(
-    handleTobiProfileSnapshot,
+    snapshot=>{
+      // Ignore delayed callbacks from a profile listener belonging to a previous login.
+      if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+      if(accountCoreReported && accountCoreUid!==uid) return;
+      handleTobiProfileSnapshot(snapshot);
+    },
     error=>{
+      if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+      if(accountCoreReported && accountCoreUid!==uid) return;
       console.warn("TobiServices-Profil konnte in Untis Next nicht live synchronisiert werden:",error);
       // Behalte das bereits vom gemeinsamen Account-Core geladene Profil vorerst bei.
       updateTobiLoginButton();
@@ -1617,9 +1627,13 @@ function localDateIsHalloween(){
   const day=Number(parts.find(part=>part.type==="day")?.value);
   return month===10 && day===31;
 }
+const halloweenUnlockInFlight = new Set();
 async function maybeUnlockHalloweenTheme(uid){
-  if(!uid || !localDateIsHalloween() || !activeTobiProfile || activeTobiProfile.disabled===true) return;
+  if(!uid || !activeTobiUser || activeTobiUser.uid!==uid ||
+     !localDateIsHalloween() || !activeTobiProfile || activeTobiProfile.disabled===true) return;
   if(Array.isArray(activeTobiProfile.ownedThemes) && activeTobiProfile.ownedThemes.includes("HalloweenEvent")) return;
+  if(halloweenUnlockInFlight.has(uid)) return;
+  halloweenUnlockInFlight.add(uid);
   try{
     const ref=tobiDb.collection("users").doc(uid);
     const unlocked=await tobiDb.runTransaction(async transaction=>{
@@ -1636,19 +1650,41 @@ async function maybeUnlockHalloweenTheme(uid){
       });
       return true;
     });
-    if(unlocked) showToast("🎃 Halloween-Theme freigeschaltet!");
+    if(unlocked && activeTobiUser?.uid===uid){
+      showToast("🎃 Halloween-Theme freigeschaltet!");
+    }
   }catch(error){
     console.warn("Halloween-Freischaltung konnte nicht gespeichert werden. Prüfe die TobiServices-Firestore-Regeln:",error);
+  }finally{
+    halloweenUnlockInFlight.delete(uid);
   }
 }
+function berlinDateTimeToTimestamp(year,monthIndex,day,hour=0,minute=0,second=0){
+  const target=Date.UTC(year,monthIndex,day,hour,minute,second);
+  let guess=target;
+  const formatter=new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit",
+    hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"
+  });
+  for(let i=0;i<3;i++){
+    const parts=Object.fromEntries(formatter.formatToParts(new Date(guess))
+      .filter(part=>part.type!=="literal").map(part=>[part.type,Number(part.value)]));
+    const observed=Date.UTC(parts.year,parts.month-1,parts.day,parts.hour,parts.minute,parts.second);
+    guess+=target-observed;
+  }
+  return guess;
+}
 function scheduleHalloweenUnlockCheck(){
-  const now=new Date();
-  let next=new Date(now.getFullYear(),9,31,0,0,5,0);
-  if(now>=next) next=new Date(now.getFullYear()+1,9,31,0,0,5,0);
+  const berlinParts=Object.fromEntries(new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Berlin",year:"numeric",month:"numeric",day:"numeric"
+  }).formatToParts(new Date()).filter(part=>part.type!=="literal")
+    .map(part=>[part.type,Number(part.value)]));
+  let next=berlinDateTimeToTimestamp(berlinParts.year,9,31,0,0,5);
+  if(Date.now()>=next) next=berlinDateTimeToTimestamp(berlinParts.year+1,9,31,0,0,5);
   setTimeout(()=>{
     if(activeTobiUser) void maybeUnlockHalloweenTheme(activeTobiUser.uid);
     scheduleHalloweenUnlockCheck();
-  },Math.max(1000,next.getTime()-now.getTime()));
+  },Math.max(1000,next-Date.now()));
 }
 scheduleHalloweenUnlockCheck();
 document.addEventListener("visibilitychange",()=>{
