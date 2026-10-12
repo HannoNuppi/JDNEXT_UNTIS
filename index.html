@@ -1721,7 +1721,7 @@ document.addEventListener("visibilitychange",()=>{
   else if(!document.hidden && document.documentElement.dataset.jdnextTheme==="adminmatrix") setMatrixRainActive(true);
 });
 function getOwnedThemeIds(profile=activeTobiProfile){
-  const owned=Array.isArray(profile?.ownedThemes)?profile.ownedThemes:[];
+  const owned=Array.isArray(profile?.ownedThemes)?[...profile.ownedThemes]:[];
   if(profile?.disabled!==true && Array.isArray(profile?.tags) && profile.tags.includes("admin")){
     owned.push("AdminMatrix");
   }
