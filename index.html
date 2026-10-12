@@ -7,10 +7,7 @@
 <link id="themeFavicon" rel="icon" href="./icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 
 <style>
   :root{
@@ -292,7 +289,7 @@
     <button class="navbtn" id="nextWeek">›</button>
   </div>
 
-  <div class="tt-wrap"><div class="timetable" id="timetable"></div></div>
+  <div class="tt-wrap"><div class="timetable" id="timetable"><div class="cell free" style="grid-column:1/-1;text-align:center">Stundenplan wird geladen…</div></div></div>
   <div class="syncbar" id="syncBar"></div>
 </div>
 
@@ -308,6 +305,9 @@
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 const OLD_FIREBASE_CONFIG = Object.freeze({
   apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
@@ -336,13 +336,37 @@ const oldFirebaseApp = firebase.apps.find(app=>app.options.projectId===OLD_FIREB
   || firebase.initializeApp(OLD_FIREBASE_CONFIG,"JDNEXT_Old");
 const oldAuth = firebase.auth(oldFirebaseApp);
 const db = firebase.firestore(oldFirebaseApp);
-const jdFunctions = firebase.functions(oldFirebaseApp, "europe-west1");
-const resolveDiscordImageCall = jdFunctions.httpsCallable("resolveJdnextDiscordImage");
+// Firebase Functions is loaded only when an old Discord image actually needs resolving.
+let resolveDiscordImageCallPromise = null;
+async function resolveDiscordImageCall(payload){
+  if(!resolveDiscordImageCallPromise){
+    resolveDiscordImageCallPromise = new Promise((resolve,reject)=>{
+      if(typeof firebase.functions === "function"){
+        try{resolve(firebase.functions(oldFirebaseApp,"europe-west1").httpsCallable("resolveJdnextDiscordImage"));return;}
+        catch(error){reject(error);return;}
+      }
+      const script=document.createElement("script");
+      script.src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js";
+      script.async=true;
+      script.onload=()=>{
+        try{resolve(firebase.functions(oldFirebaseApp,"europe-west1").httpsCallable("resolveJdnextDiscordImage"));}
+        catch(error){reject(error);}
+      };
+      script.onerror=()=>reject(new Error("Firebase Functions konnte nicht geladen werden."));
+      document.head.appendChild(script);
+    });
+  }
+  const callable=await resolveDiscordImageCallPromise;
+  return callable(payload);
+}
 
 const tobiApp = firebase.apps.find(app=>app.options.projectId===TOBI_FIREBASE_CONFIG.projectId)
   || firebase.initializeApp(TOBI_FIREBASE_CONFIG);
 const tobiAuth = firebase.auth(tobiApp);
 const tobiDb = firebase.firestore(tobiApp);
+// Keep Compat auth persistence aligned with the Account Center on this origin.
+const tobiAuthPersistenceReady=tobiAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+  .catch(error=>{console.warn("TobiServices-Login-Persistenz konnte nicht abgeglichen werden:",error);});
 
 let activeTobiUser = null;
 let activeTobiProfile = null;
@@ -625,6 +649,7 @@ function explainFirebaseError(error, action="Dieser Vorgang"){
   return action+" ist fehlgeschlagen"+detail+". Prüfe die Firebase-Einstellungen und die Internetverbindung.";
 }
 async function ensureTobiAuthForJdnext(){
+  await tobiAuthPersistenceReady;
   await tobiAuthReady;
   if(tobiAuth.currentUser) return tobiAuth.currentUser;
   try{
@@ -1437,7 +1462,7 @@ function showToast(msg){
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
 document.getElementById("loginBtn").onclick=async()=>{
-  try{await Promise.race([tobiAuthReady,new Promise(resolve=>setTimeout(resolve,900))]);}catch{}
+  try{await Promise.race([Promise.all([tobiAuthReady,accountCoreReady]),new Promise(resolve=>setTimeout(resolve,1500))]);}catch{}
   const signedIn=Boolean(activeTobiUser || accountCoreUid || (tobiAuth.currentUser&&!tobiAuth.currentUser.isAnonymous));
   location.href=signedIn ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
 };
@@ -1487,6 +1512,8 @@ function updateTobiLoginButton(){
 }
 
 let accountCoreReported=false;
+let resolveAccountCoreReady;
+const accountCoreReady=new Promise(resolve=>{resolveAccountCoreReady=resolve;});
 let accountCoreUid=null;
 let tobiProfileWatchedUid=null;
 
@@ -1554,6 +1581,7 @@ tobiAuth.onAuthStateChanged(user=>{
 });
 
 window.addEventListener("tobiservices-account-session",event=>{
+  resolveAccountCoreReady();
   const detail=event.detail||{};
   const user=detail.user||null;
   const profile=detail.profile||null;
