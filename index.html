@@ -711,12 +711,12 @@ async function loadClasswork(){
           });
         });
         classworkData[key]=entries;
-        renderTimetable();
+        scheduleTimetableRender();
       },
       err=>{
         console.warn("Classwork read failed:",key,err);
         classworkData[key]=[];
-        renderTimetable();
+        scheduleTimetableRender();
       }
     );
     classworkUnsubscribes.push(unsub);
@@ -837,14 +837,14 @@ async function loadHomework(){
             });
           });
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         },
         err=>{
           console.error("TobiServices homework read failed:",hwKey,err);
           sharedHomeworkData[hwKey]=[];
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         }
       );
@@ -868,14 +868,14 @@ async function loadHomework(){
             });
           });
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         },
         err=>{
           console.warn("Older JDNEXT homework read failed:",hwKey,err);
           olderSharedHomeworkData[hwKey]=[];
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         }
       );
@@ -914,7 +914,7 @@ async function loadLegacyHomework(){
       });
       legacyHomeworkData=nextLegacy;
       rebuildHomeworkData();
-      renderTimetable();
+      scheduleTimetableRender();
     },
     err=>console.warn("Legacy homework read failed:",err)
   );
@@ -1609,8 +1609,13 @@ window.addEventListener("tobiservices-account-session",event=>{
 });
 
 function localDateIsHalloween(){
-  const now=new Date();
-  return now.getMonth()===9 && now.getDate()===31;
+  // Event dates follow Germany's calendar even if the device timezone differs.
+  const parts=new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Berlin",month:"numeric",day:"numeric"
+  }).formatToParts(new Date());
+  const month=Number(parts.find(part=>part.type==="month")?.value);
+  const day=Number(parts.find(part=>part.type==="day")?.value);
+  return month===10 && day===31;
 }
 async function maybeUnlockHalloweenTheme(uid){
   if(!uid || !localDateIsHalloween() || !activeTobiProfile || activeTobiProfile.disabled===true) return;
@@ -1955,6 +1960,17 @@ if("serviceWorker" in navigator){
 oldAuth.onAuthStateChanged(user=>{
   currentUser=user;
 });
+
+let timetableRenderScheduled = false;
+function scheduleTimetableRender(){
+  if(timetableRenderScheduled) return;
+  timetableRenderScheduled = true;
+  const schedule = window.requestAnimationFrame || (callback=>setTimeout(callback,16));
+  schedule(()=>{
+    timetableRenderScheduled = false;
+    renderTimetable();
+  });
+}
 
 function renderAll(){
   renderWeekNav();
