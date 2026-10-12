@@ -1532,6 +1532,7 @@ function updateTobiLoginButton(){
 
 let accountCoreReported=false;
 let accountCoreSetEquippedTheme=null;
+let accountCoreRefreshProfile=null;
 let resolveAccountCoreReady;
 const accountCoreReady=new Promise(resolve=>{resolveAccountCoreReady=resolve;});
 let accountCoreUid=null;
@@ -1543,8 +1544,9 @@ function stopTobiProfileWatch(){
   tobiProfileWatchedUid=null;
 }
 function handleTobiProfileSnapshot(snapshot){
-  // A profile that the Account Core already supplied is more useful than a
-  // transient empty snapshot; profiles are intentionally never deleted.
+  // The modular Account Core supplies the session's profile. Do not overwrite it
+  // with an older cached Compat snapshot; that can hide a just-granted event theme.
+  if(snapshot.metadata?.fromCache && activeTobiProfile) return;
   if(snapshot.exists) activeTobiProfile=snapshot.data()||{};
   else if(!activeTobiProfile) activeTobiProfile=null;
   if(activeTobiProfile?.disabled===true){
@@ -1621,6 +1623,9 @@ window.addEventListener("tobiservices-account-session",event=>{
   const profile=detail.profile||null;
   accountCoreSetEquippedTheme=typeof detail.setEquippedTheme==="function"
     ? detail.setEquippedTheme
+    : null;
+  accountCoreRefreshProfile=typeof detail.refreshProfileFromServer==="function"
+    ? detail.refreshProfileFromServer
     : null;
   accountCoreReported=true;
   if(user?.uid && !user.isAnonymous){
@@ -1938,12 +1943,39 @@ function renderThemeMenu(){
     });
   });
 }
+async function refreshActiveTobiProfileFromServer(){
+  const user=activeTobiUser;
+  if(!user?.uid || user.isAnonymous) return activeTobiProfile;
+  if(accountCoreRefreshProfile){
+    const fresh=await accountCoreRefreshProfile(user.uid);
+    if(activeTobiUser?.uid!==user.uid) return null;
+    if(fresh?.uid===user.uid){
+      activeTobiProfile=fresh;
+      updateTobiLoginButton();
+      return fresh;
+    }
+    throw new Error("Dein TobiServices-Profil konnte nicht vom Server gelesen werden.");
+  }
+  // Fallback for clients that still have an older Account Core module cached.
+  const snap=await tobiDb.collection("users").doc(user.uid).get({source:"server"});
+  if(activeTobiUser?.uid!==user.uid) return null;
+  if(!snap.exists) throw new Error("Dein TobiServices-Profil wurde nicht gefunden.");
+  activeTobiProfile={uid:user.uid,...(snap.data()||{})};
+  updateTobiLoginButton();
+  return activeTobiProfile;
+}
 function openThemeMenu(){
   renderThemeMenu();
   document.getElementById("overlay").classList.add("show");
+  if(activeTobiUser){
+    void refreshActiveTobiProfileFromServer().then(()=>{
+      if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
+    }).catch(error=>console.warn("Theme-Besitz konnte nicht aktualisiert werden:",error));
+  }
 }
 async function equipTheme(theme){
   try{
+    if(activeTobiUser) await refreshActiveTobiProfileFromServer();
     if(activeTobiUser){
       if(!activeTobiProfile || activeTobiProfile.disabled===true) throw new Error("Dein TobiServices-Konto ist noch nicht bereit oder gesperrt.");
       if(!getOwnedThemeIds().has(theme.id)) throw new Error("Dieses Theme besitzt du noch nicht.");
@@ -2127,13 +2159,14 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-theme-permission-fix-20261012";
+import { onUser, setEquippedTheme, refreshProfileFromServer } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-theme-refresh-20261012";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
       user: user ? { uid:user.uid, email:user.email||"", displayName:user.displayName||"", isAnonymous:user.isAnonymous===true } : null,
       profile,
-      setEquippedTheme
+      setEquippedTheme,
+      refreshProfileFromServer
     }
   }));
 });
