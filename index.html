@@ -1564,10 +1564,14 @@ function watchTobiProfile(uid){
   stopTobiProfileWatch();
   tobiProfileWatchedUid=uid;
   tobiProfileUnsubscribe=tobiDb.collection("users").doc(uid).onSnapshot(
+    {includeMetadataChanges:true},
     snapshot=>{
       // Ignore delayed callbacks from a profile listener belonging to a previous login.
       if(!activeTobiUser || activeTobiUser.uid!==uid) return;
       if(accountCoreReported && accountCoreUid!==uid) return;
+      // Do not let an old local cache replace the profile the Account Center just loaded.
+      // Metadata changes are enabled so the authoritative server snapshot will still arrive.
+      if(snapshot.metadata?.fromCache && activeTobiProfile) return;
       handleTobiProfileSnapshot(snapshot);
     },
     error=>{
