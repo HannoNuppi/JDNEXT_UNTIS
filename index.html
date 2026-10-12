@@ -620,9 +620,10 @@ async function ensureAnonymousAuth(){
   if(oldAuth.currentUser) return oldAuth.currentUser;
   try{
     return (await oldAuth.signInAnonymously()).user;
-  }catch(e){
-    console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
-    return null;
+  }catch(error){
+    console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",error);
+    // Preserve Firebase's error code so classwork can show the actual fix.
+    throw error;
   }
 }
 
@@ -1204,8 +1205,10 @@ function openModal(date,pIdx,subject){
         const message=error?.code==="permission-denied"
           ? "Firebase hat das Speichern abgelehnt. Prüfe die Firestore-Regeln des Projekts next-untis-plus."
           : error?.code==="auth/operation-not-allowed"
-            ? "Die anonyme Anmeldung ist in next-untis-plus deaktiviert. Aktiviere sie in Firebase Authentication."
-            : (error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
+            ? "Die anonyme Anmeldung ist in next-untis-plus deaktiviert. Aktiviere sie unter Firebase Authentication → Sign-in method → Anonymous."
+            : error?.code==="auth/unauthorized-domain"
+              ? "Firebase blockiert diese Website-Domain. Ergänze hannonuppi.github.io unter Authentication → Settings → Authorized domains."
+              : (error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
         showToast(message);
       }finally{
         classworkSave.disabled=false;
