@@ -1507,6 +1507,7 @@ function handleTobiProfileSnapshot(snapshot){
   if(activeTobiProfile && activeTobiUser && activeTobiProfile.disabled!==true){
     void maybeUnlockHalloweenTheme(activeTobiUser.uid);
   }
+  if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
 }
 function watchTobiProfile(uid){
   if(!uid || tobiProfileWatchedUid===uid) return;
@@ -1525,12 +1526,16 @@ function watchTobiProfile(uid){
 }
 
 tobiAuth.onAuthStateChanged(user=>{
-  if(accountCoreReported && accountCoreUid && (!user || user.isAnonymous || user.uid!==accountCoreUid)){
+  if(accountCoreReported){
+    // Das Account-Core-Modul ist die Quelle, die auch das Account Center verwendet.
+    // Ein abweichender Compat-Initialzustand darf eine bestehende Sitzung nicht löschen.
+    if(!accountCoreUid || !user || user.isAnonymous || user.uid!==accountCoreUid) return;
+    if(!tobiAuthInitialized){
+      tobiAuthInitialized=true;
+      resolveTobiAuthReady(user);
+    }
+    watchTobiProfile(accountCoreUid);
     return;
-  }
-  if(accountCoreReported && !accountCoreUid && user && !user.isAnonymous){
-    // The Compat callback may hydrate before the modular account core does.
-    accountCoreReported=false;
   }
   activeTobiUser=user&&!user.isAnonymous?user:null;
   if(!activeTobiUser) activeTobiProfile=null;
@@ -1564,13 +1569,6 @@ window.addEventListener("tobiservices-account-session",event=>{
     watchTobiProfile(user.uid);
     if(profile && profile.disabled!==true) void maybeUnlockHalloweenTheme(user.uid);
   }else{
-    const compatUser=tobiAuth.currentUser;
-    if(compatUser&&!compatUser.isAnonymous){
-      accountCoreUid=compatUser.uid;
-      activeTobiUser=compatUser;
-      watchTobiProfile(compatUser.uid);
-      return;
-    }
     accountCoreUid=null;
     activeTobiUser=null;
     activeTobiProfile=null;
