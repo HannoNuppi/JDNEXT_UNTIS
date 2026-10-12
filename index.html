@@ -1631,7 +1631,8 @@ const halloweenUnlockInFlight = new Set();
 async function maybeUnlockHalloweenTheme(uid){
   if(!uid || !activeTobiUser || activeTobiUser.uid!==uid ||
      !localDateIsHalloween() || !activeTobiProfile || activeTobiProfile.disabled===true) return;
-  if(Array.isArray(activeTobiProfile.ownedThemes) && activeTobiProfile.ownedThemes.includes("HalloweenEvent")) return;
+  if(activeTobiProfile.halloweenUnlockedAt ||
+     (Array.isArray(activeTobiProfile.ownedThemes) && activeTobiProfile.ownedThemes.includes("HalloweenEvent"))) return;
   if(halloweenUnlockInFlight.has(uid)) return;
   halloweenUnlockInFlight.add(uid);
   try{
