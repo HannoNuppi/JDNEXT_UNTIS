@@ -520,7 +520,8 @@ function getHomeworkEntries(hwKey){
 
 function isTobiAdmin(profile=activeTobiProfile){
   return Boolean(activeTobiUser && profile && profile.disabled!==true
-    && Array.isArray(profile.tags) && profile.tags.includes("admin"));
+    && Array.isArray(profile.tags)
+    && profile.tags.some(tag=>String(tag).trim().toLowerCase()==="admin"));
 }
 function hasActiveMaintenanceBypass(){
   return isTobiAdmin() && activeTobiProfile?.maintenanceBypass===true;
@@ -1530,6 +1531,7 @@ function updateTobiLoginButton(){
 }
 
 let accountCoreReported=false;
+let accountCoreSetEquippedTheme=null;
 let resolveAccountCoreReady;
 const accountCoreReady=new Promise(resolve=>{resolveAccountCoreReady=resolve;});
 let accountCoreUid=null;
@@ -1613,6 +1615,9 @@ window.addEventListener("tobiservices-account-session",event=>{
   const detail=event.detail||{};
   const user=detail.user||null;
   const profile=detail.profile||null;
+  accountCoreSetEquippedTheme=typeof detail.setEquippedTheme==="function"
+    ? detail.setEquippedTheme
+    : null;
   accountCoreReported=true;
   if(user?.uid && !user.isAnonymous){
     accountCoreUid=user.uid;
@@ -1753,15 +1758,23 @@ let matrixFrame=0;
 let matrixLastDraw=0;
 let matrixColumns=[];
 let matrixCellSize=18;
+let matrixCanvasReady=false;
 function resizeMatrixCanvas(){
   if(!matrixCanvas||!matrixContext) return;
   const ratio=Math.min(window.devicePixelRatio||1,2);
-  matrixCanvas.width=Math.max(1,Math.floor(window.innerWidth*ratio));
-  matrixCanvas.height=Math.max(1,Math.floor(window.innerHeight*ratio));
+  const width=Math.max(1,Math.floor(window.innerWidth*ratio));
+  const height=Math.max(1,Math.floor(window.innerHeight*ratio));
+  if(matrixCanvas.width!==width) matrixCanvas.width=width;
+  if(matrixCanvas.height!==height) matrixCanvas.height=height;
   matrixCanvas.style.width=window.innerWidth+"px";
   matrixCanvas.style.height=window.innerHeight+"px";
   matrixContext.setTransform(ratio,0,0,ratio,0,0);
-  matrixColumns=Array.from({length:Math.ceil(window.innerWidth/matrixCellSize)},()=>Math.floor(Math.random()*-35));
+  matrixContext.clearRect(0,0,window.innerWidth,window.innerHeight);
+  matrixColumns=Array.from(
+    {length:Math.ceil(window.innerWidth/matrixCellSize)},
+    ()=>Math.floor(Math.random()*-35)
+  );
+  matrixCanvasReady=true;
 }
 function setMatrixRainActive(enabled){
   if(!matrixCanvas||!matrixContext) return;
@@ -1769,7 +1782,8 @@ function setMatrixRainActive(enabled){
   const active=Boolean(enabled&&!reduceMotion);
   matrixCanvas.hidden=!active;
   if(active){
-    if(!matrixCanvas.width) resizeMatrixCanvas();
+    // A canvas defaults to 300×150; checking width===0 skips initialization.
+    if(!matrixCanvasReady || !matrixColumns.length) resizeMatrixCanvas();
     if(!matrixFrame) matrixFrame=requestAnimationFrame(drawMatrixRain);
   }else if(matrixFrame){
     cancelAnimationFrame(matrixFrame);
@@ -1808,7 +1822,8 @@ document.addEventListener("visibilitychange",()=>{
 });
 function getOwnedThemeIds(profile=activeTobiProfile){
   const owned=Array.isArray(profile?.ownedThemes)?[...profile.ownedThemes]:[];
-  if(profile?.disabled!==true && Array.isArray(profile?.tags) && profile.tags.includes("admin")){
+  if(profile?.disabled!==true && Array.isArray(profile?.tags)
+     && profile.tags.some(tag=>String(tag).trim().toLowerCase()==="admin")){
     owned.push("AdminMatrix");
   }
   return new Set(["Next",...owned]);
@@ -1903,8 +1918,19 @@ async function equipTheme(theme){
         if(!isTobiAdmin()) throw new Error("Admin Matrix ist nur mit dem aktiven admin-Tag verfügbar.");
         localStorage.setItem("jdnextTheme","AdminMatrix");
       }else{
-        await tobiDb.collection("users").doc(activeTobiUser.uid).update({equippedTheme:theme.id});
-        activeTobiProfile={...activeTobiProfile,equippedTheme:theme.id};
+        if(accountCoreSetEquippedTheme){
+          // Prefer the same authenticated Firebase session used by the Account Center.
+          const updatedProfile=await accountCoreSetEquippedTheme(theme.id);
+          activeTobiProfile={...activeTobiProfile,...updatedProfile,equippedTheme:theme.id};
+        }else{
+          await Promise.all([tobiAuthPersistenceReady,tobiAuthReady]);
+          const authUser=tobiAuth.currentUser;
+          if(!authUser || authUser.isAnonymous || authUser.uid!==activeTobiUser.uid){
+            throw new Error("Deine Anmeldung wird noch synchronisiert. Lade die Seite neu oder melde dich erneut an.");
+          }
+          await tobiDb.collection("users").doc(activeTobiUser.uid).update({equippedTheme:theme.id});
+          activeTobiProfile={...activeTobiProfile,equippedTheme:theme.id};
+        }
         localStorage.removeItem("jdnextTheme");
       }
     }else{
@@ -2068,12 +2094,13 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js";
+import { onUser, setEquippedTheme } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-theme-permission-fix-20261012";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
       user: user ? { uid:user.uid, email:user.email||"", displayName:user.displayName||"", isAnonymous:user.isAnonymous===true } : null,
-      profile
+      profile,
+      setEquippedTheme
     }
   }));
 });
