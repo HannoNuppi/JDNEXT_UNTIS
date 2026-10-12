@@ -243,8 +243,9 @@
   @media(max-width:520px){.theme-grid{grid-template-columns:1fr}.theme-preview{height:50px}.maintenance-bypass-btn{width:100%}}
 
   /* Matrix remains inactive unless the Admin Matrix theme is selected. */
-  #matrixRain{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.43;mix-blend-mode:screen}
+  #matrixRain{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.62;mix-blend-mode:screen}
   #matrixRain[hidden]{display:none}
+  html[data-jdnext-theme="adminmatrix"] #matrixRain{opacity:.72}
   html[data-jdnext-theme="adminmatrix"] body{background:#010604}
   html[data-jdnext-theme="adminmatrix"] body::before{opacity:.1}
   html[data-jdnext-theme="adminmatrix"] .tt-wrap,
@@ -1188,10 +1189,24 @@ function openModal(date,pIdx,subject){
         await saveClassworkEntry(hwKey,title);
         input.value="";
         showToast("✅ Klassenarbeit eingetragen");
+        // Update the open modal immediately; the Firestore listener only redraws the grid.
+        const classList=modal.querySelector(".classwork-list");
+        if(classList){
+          const empty=classList.querySelector(".image-status");
+          if(empty) empty.remove();
+          const row=el("div","classwork-item");
+          row.textContent=title;
+          classList.appendChild(row);
+        }
         renderTimetable();
       }catch(error){
-        console.error(error);
-        showToast(error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
+        console.error("Klassenarbeit konnte nicht gespeichert werden:",error);
+        const message=error?.code==="permission-denied"
+          ? "Firebase hat das Speichern abgelehnt. Prüfe die Firestore-Regeln des Projekts next-untis-plus."
+          : error?.code==="auth/operation-not-allowed"
+            ? "Die anonyme Anmeldung ist in next-untis-plus deaktiviert. Aktiviere sie in Firebase Authentication."
+            : (error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
+        showToast(message);
       }finally{
         classworkSave.disabled=false;
         classworkSave.textContent="KA+";
