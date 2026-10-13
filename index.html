@@ -273,7 +273,7 @@
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
-      <button class="themebtn" id="leaderboardBtn" type="button">🏆 Rangliste</button>
+      <button class="themebtn" id="leaderboardBtn" type="button" hidden style="display:none">🏆 Rangliste</button>
       <button class="themebtn" id="themeBtn" type="button">🎨 Themes</button>
       <button class="loginbtn" id="loginBtn">TobiServices Account</button>
     </div>
@@ -1516,6 +1516,12 @@ document.getElementById("maintenanceBypassBtn").onclick=async()=>{
 
 
 function updateTobiLoginButton(){
+  const leaderboardButton=document.getElementById("leaderboardBtn");
+  if(leaderboardButton){
+    const canViewLeaderboard=isTobiAdmin();
+    leaderboardButton.hidden=!canViewLeaderboard;
+    leaderboardButton.style.display=canViewLeaderboard?"":"none";
+  }
   const button=document.getElementById("loginBtn");
   if(!button) return;
   if(activeTobiUser && activeTobiProfile?.disabled===true){
@@ -1524,9 +1530,9 @@ function updateTobiLoginButton(){
   }else if(activeTobiUser){
     const name=activeTobiProfile?.displayName||activeTobiUser.displayName||activeTobiUser.email||"Angemeldet";
     const coins=Number.isSafeInteger(activeTobiProfile?.goldCoins)?activeTobiProfile.goldCoins:0;
-    const icon=activeTobiProfile?.profileIcon||"🌟";
+    const icon=typeof activeTobiProfile?.profileIcon==="string"?activeTobiProfile.profileIcon:"";
     const title=activeTobiProfile?.profileTitle||"";
-    button.textContent=`${icon} ✦ ${coins.toLocaleString("de-DE")} Gold`;
+    button.textContent=`${icon}${icon?" ":""}✦ ${coins.toLocaleString("de-DE")} Gold`;
     button.title=`${name}${title?" · "+title:""} · TobiServices Account öffnen`;
   }else{
     button.textContent="TobiServices Account";
@@ -2043,6 +2049,10 @@ async function retryAccountProfileLoad(uid){
   }
 }
 async function openLeaderboard(){
+  if(!isTobiAdmin()){
+    showToast("Diese Rangliste ist nur für aktive Admins verfügbar.");
+    return;
+  }
   const modal=document.getElementById("modal");
   modal.innerHTML=
     '<button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>'+
@@ -2068,7 +2078,7 @@ async function openLeaderboard(){
       return;
     }
     rows.innerHTML=entries.map((entry,index)=>{
-      const icon=String(entry.profileIcon||"🌟");
+      const icon=String(entry.profileIcon||"");
       const name=String(entry.displayName||"Spieler").slice(0,32);
       const title=String(entry.profileTitle||"").slice(0,32);
       const coins=Number.isSafeInteger(entry.goldCoins)?entry.goldCoins:0;
@@ -2273,7 +2283,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-recognition-leaderboard-20261013b";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-recognition-leaderboard-20261013c";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
