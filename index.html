@@ -273,6 +273,7 @@
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
+      <button class="themebtn" id="leaderboardBtn" type="button">🏆 Rangliste</button>
       <button class="themebtn" id="themeBtn" type="button">🎨 Themes</button>
       <button class="loginbtn" id="loginBtn">TobiServices Account</button>
     </div>
@@ -1480,6 +1481,7 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
+document.getElementById("leaderboardBtn").onclick=openLeaderboard;
 document.getElementById("loginBtn").onclick=async()=>{
   try{await Promise.race([Promise.all([tobiAuthReady,accountCoreReady]),new Promise(resolve=>setTimeout(resolve,1500))]);}catch{}
   const signedIn=Boolean(activeTobiUser || accountCoreUid || (tobiAuth.currentUser&&!tobiAuth.currentUser.isAnonymous));
@@ -1522,8 +1524,10 @@ function updateTobiLoginButton(){
   }else if(activeTobiUser){
     const name=activeTobiProfile?.displayName||activeTobiUser.displayName||activeTobiUser.email||"Angemeldet";
     const coins=Number.isSafeInteger(activeTobiProfile?.goldCoins)?activeTobiProfile.goldCoins:0;
-    button.textContent=`✦ ${coins.toLocaleString("de-DE")} Gold`;
-    button.title=`${name} · TobiServices Account öffnen`;
+    const icon=activeTobiProfile?.profileIcon||"🌟";
+    const title=activeTobiProfile?.profileTitle||"";
+    button.textContent=`${icon} ✦ ${coins.toLocaleString("de-DE")} Gold`;
+    button.title=`${name}${title?" · "+title:""} · TobiServices Account öffnen`;
   }else{
     button.textContent="TobiServices Account";
     button.title="Anmelden oder dein gemeinsames Goldguthaben ansehen";
@@ -1533,6 +1537,8 @@ function updateTobiLoginButton(){
 let accountCoreReported=false;
 let accountCoreSetEquippedTheme=null;
 let accountCoreRefreshProfile=null;
+let accountCoreGetLeaderboard=null;
+let accountCoreSyncPublicProfile=null;
 let resolveAccountCoreReady;
 const accountCoreReady=new Promise(resolve=>{resolveAccountCoreReady=resolve;});
 let accountCoreUid=null;
@@ -1549,6 +1555,11 @@ function handleTobiProfileSnapshot(snapshot){
   if(snapshot.metadata?.fromCache && activeTobiProfile) return;
   if(snapshot.exists) activeTobiProfile=snapshot.data()||{};
   else if(!activeTobiProfile) activeTobiProfile=null;
+  if(activeTobiProfile && activeTobiUser && activeTobiProfile.disabled!==true && accountCoreSyncPublicProfile){
+    void accountCoreSyncPublicProfile(activeTobiProfile).catch(error=>
+      console.warn("Ranglisten-Eintrag konnte nicht synchronisiert werden:",error)
+    );
+  }
   if(activeTobiProfile?.disabled===true){
     showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
   }
@@ -1627,17 +1638,32 @@ window.addEventListener("tobiservices-account-session",event=>{
   accountCoreRefreshProfile=typeof detail.refreshProfileFromServer==="function"
     ? detail.refreshProfileFromServer
     : null;
+  accountCoreGetLeaderboard=typeof detail.getLeaderboard==="function"
+    ? detail.getLeaderboard
+    : null;
+  accountCoreSyncPublicProfile=typeof detail.syncPublicProfile==="function"
+    ? detail.syncPublicProfile
+    : null;
   accountCoreReported=true;
   if(user?.uid && !user.isAnonymous){
+    const previousUid=activeTobiUser?.uid;
     accountCoreUid=user.uid;
     activeTobiUser={uid:user.uid,email:user.email||"",displayName:user.displayName||"",isAnonymous:false};
-    activeTobiProfile=profile;
+    // Avoid clearing a profile for the same account if its first Firestore read
+    // failed; a fresh server read below repairs the partial session.
+    activeTobiProfile=profile || (previousUid===user.uid ? activeTobiProfile : null);
     updateTobiLoginButton();
     applyTheme(currentEquippedTheme());
     renderMaintenanceBypassButton();
     refreshMaintenanceAccess();
     watchTobiProfile(user.uid);
-    if(profile && profile.disabled!==true) void maybeUnlockHalloweenTheme(user.uid);
+    if(activeTobiProfile && activeTobiProfile.disabled!==true){
+      void maybeUnlockHalloweenTheme(user.uid);
+      if(accountCoreSyncPublicProfile) void accountCoreSyncPublicProfile(activeTobiProfile).catch(error=>
+        console.warn("Ranglisten-Eintrag konnte nicht synchronisiert werden:",error)
+      );
+    }
+    if(!profile) void retryAccountProfileLoad(user.uid);
   }else{
     accountCoreUid=null;
     activeTobiUser=null;
@@ -1973,6 +1999,79 @@ function openThemeMenu(){
     }).catch(error=>console.warn("Theme-Besitz konnte nicht aktualisiert werden:",error));
   }
 }
+
+async function retryAccountProfileLoad(uid){
+  const waits=[0,350,900,1700];
+  for(const delay of waits){
+    if(delay) await new Promise(resolve=>setTimeout(resolve,delay));
+    if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+    try{
+      if(!accountCoreRefreshProfile) break;
+      const profile=await accountCoreRefreshProfile(uid);
+      if(!profile || profile.uid!==uid) continue;
+      if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+      activeTobiProfile=profile;
+      updateTobiLoginButton();
+      applyTheme(currentEquippedTheme());
+      renderMaintenanceBypassButton();
+      refreshMaintenanceAccess();
+      if(accountCoreSyncPublicProfile && profile.disabled!==true){
+        void accountCoreSyncPublicProfile(profile).catch(error=>
+          console.warn("Ranglisten-Profil konnte nicht synchronisiert werden:",error)
+        );
+      }
+      if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
+      return;
+    }catch(error){
+      console.warn("Account-Profil wird erneut geladen:",error);
+    }
+  }
+}
+async function openLeaderboard(){
+  const modal=document.getElementById("modal");
+  modal.innerHTML=
+    '<button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>'+
+    '<h2>🏆 Gold-Rangliste</h2>'+
+    '<div class="msub">Die besten TobiServices-Accounts nach Goldmünzen. Titel und Icons sind rein kosmetisch.</div>'+
+    '<div class="theme-balance"><span>RANGLISTE</span><strong id="leaderboardStatus">Lade Rangliste…</strong></div>'+
+    '<div id="leaderboardRows" style="display:grid;gap:8px;margin-top:12px"></div>'+
+    '<p class="theme-login-note">Es erscheinen Accounts, deren öffentliches Ranglistenprofil bereits synchronisiert wurde. E-Mail-Adressen und Tags werden nicht angezeigt.</p>';
+  modal.querySelector("#closeModal").onclick=closeModal;
+  document.getElementById("overlay").classList.add("show");
+  const status=modal.querySelector("#leaderboardStatus");
+  const rows=modal.querySelector("#leaderboardRows");
+  try{
+    if(activeTobiUser && accountCoreSyncPublicProfile){
+      await accountCoreSyncPublicProfile(activeTobiProfile);
+    }
+    if(!accountCoreGetLeaderboard) throw new Error("Account-Modul noch nicht geladen. Bitte lade die Seite neu.");
+    const entries=await accountCoreGetLeaderboard(50);
+    if(!document.getElementById("leaderboardRows")) return;
+    status.textContent=entries.length ? entries.length+" Accounts" : "Noch keine Einträge";
+    if(!entries.length){
+      rows.innerHTML='<div class="theme-card"><strong>Noch ist es ruhig hier…</strong><small>Sobald Konten ihre Ranglistenprofile synchronisiert haben, erscheinen sie hier.</small></div>';
+      return;
+    }
+    rows.innerHTML=entries.map((entry,index)=>{
+      const icon=String(entry.profileIcon||"🌟");
+      const name=String(entry.displayName||"Spieler").slice(0,32);
+      const title=String(entry.profileTitle||"").slice(0,32);
+      const coins=Number.isSafeInteger(entry.goldCoins)?entry.goldCoins:0;
+      const medal=index===0?"🥇":index===1?"🥈":index===2?"🥉":String(index+1);
+      return '<div class="theme-card" style="display:flex;align-items:center;gap:10px;padding:10px 12px">'+
+        '<strong style="width:28px;text-align:center;color:var(--gold)">'+medal+'</strong>'+
+        '<span style="font-size:25px;width:34px;text-align:center">'+escapeHtml(icon)+'</span>'+
+        '<div style="min-width:0;flex:1"><strong>'+escapeHtml(name)+'</strong>'+
+        (title?'<small style="display:block;color:var(--gold)">'+escapeHtml(title)+'</small>':'')+
+        '</div><strong style="white-space:nowrap">✦ '+coins.toLocaleString("de-DE")+'</strong></div>';
+    }).join("");
+  }catch(error){
+    console.error("Rangliste konnte nicht geladen werden:",error);
+    if(document.getElementById("leaderboardStatus")) status.textContent=error?.message||"Laden fehlgeschlagen.";
+    rows.innerHTML='<div class="theme-card"><strong>Rangliste gerade nicht verfügbar</strong><small>Bitte prüfe die Firestore-Regeln und lade die Seite neu.</small></div>';
+  }
+}
+
 async function equipTheme(theme){
   try{
     if(activeTobiUser) await refreshActiveTobiProfileFromServer();
@@ -2159,14 +2258,16 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-theme-refresh-20261012";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-recognition-leaderboard-20261013";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
       user: user ? { uid:user.uid, email:user.email||"", displayName:user.displayName||"", isAnonymous:user.isAnonymous===true } : null,
       profile,
       setEquippedTheme,
-      refreshProfileFromServer
+      refreshProfileFromServer,
+      getLeaderboard,
+      syncPublicProfile
     }
   }));
 });
