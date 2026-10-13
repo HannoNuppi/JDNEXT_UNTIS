@@ -35,6 +35,12 @@ Admins können während des Wartungsmodus in der Wartungsansicht den **Admin-War
 
 Für neue Posts, Bildanhänge, Reports und Münzen muss `Tobiservices-Account/firestore.rules` im Projekt `tobiservices` veröffentlicht und **Authentication → Sign-in method → Anonym** aktiviert sein. Die Regeln aus diesem Repository bleiben für Klassenarbeiten und bereits vorhandene Legacy-Hausaufgaben im Projekt `next-untis-plus` erforderlich.
 
+## Rangliste und Profilgestaltung
+
+Die Vorschau enthält eine **Gold-Rangliste** im Kopfbereich. Sie sortiert synchronisierte Profile nach dem gemeinsamen Goldmünzen-Guthaben. Im Account Center lassen sich ein Profil-Icon und ein rein kosmetischer Titel wählen. Titel sind ausdrücklich von Tags getrennt und verleihen **keine** Rechte. Die öffentliche Ranglisten-Collection enthält nur Anzeigename, Icon, Titel und Goldmünzen – keine E-Mail-Adresse oder Tags. Ein Konto erscheint, sobald es sein öffentliches Profil nach dem Login synchronisiert hat.
+
+Damit die Profiländerungen und die Rangliste funktionieren, muss die aktuelle `firestore.rules` aus dem TobiServices-Account-Repository im Firebase-Projekt `tobiservices` veröffentlicht sein. Ein GitHub-Commit veröffentlicht Firestore-Regeln nicht automatisch.
+
 ## Android APK
 
 Untis Next kann als Android-APK gebaut werden. Die GitHub-Action baut nach relevanten Änderungen automatisch eine installierbare Debug-APK. Im Web-App-Kopf gibt es auch einen **APK**-Link.
