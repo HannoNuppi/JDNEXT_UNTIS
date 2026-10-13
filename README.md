@@ -37,7 +37,7 @@ Für neue Posts, Bildanhänge, Reports und Münzen muss `Tobiservices-Account/fi
 
 ## Rangliste und Profilgestaltung
 
-Die Vorschau enthält eine **Gold-Rangliste** im Kopfbereich. Sie sortiert synchronisierte Profile nach dem gemeinsamen Goldmünzen-Guthaben. Im Account Center lassen sich ein Profil-Icon und ein rein kosmetischer Titel wählen. Titel sind ausdrücklich von Tags getrennt und verleihen **keine** Rechte. Die öffentliche Ranglisten-Collection enthält nur Anzeigename, Icon, Titel und Goldmünzen – keine E-Mail-Adresse oder Tags. Ein Konto erscheint, sobald es sein öffentliches Profil nach dem Login synchronisiert hat.
+Die Vorschau enthält eine **Gold-Rangliste** im Kopfbereich. Sie sortiert synchronisierte Profile nach dem gemeinsamen Goldmünzen-Guthaben und ist nur für aktive Admins sichtbar. Im Account Center lassen sich ein optionales Profil-Icon und ein rein kosmetischer Titel wählen. Neue Konten starten mit `tags: []` und ohne Profil-Icon. Titel sind ausdrücklich von Tags getrennt und verleihen **keine** Rechte. Die Ranglisten-Collection enthält nur Anzeigename, optionales Icon, Titel und Goldmünzen – keine E-Mail-Adresse oder Tags; ihre Leserechte sind auf aktive Admins beschränkt. Ein Konto erscheint, sobald es sein Ranglistenprofil nach dem Login synchronisiert hat.
 
 Damit die Profiländerungen und die Rangliste funktionieren, muss die aktuelle `firestore.rules` aus dem TobiServices-Account-Repository im Firebase-Projekt `tobiservices` veröffentlicht sein. Ein GitHub-Commit veröffentlicht Firestore-Regeln nicht automatisch.
 
