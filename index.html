@@ -366,9 +366,9 @@ const tobiApp = firebase.apps.find(app=>app.options.projectId===TOBI_FIREBASE_CO
   || firebase.initializeApp(TOBI_FIREBASE_CONFIG);
 const tobiAuth = firebase.auth(tobiApp);
 const tobiDb = firebase.firestore(tobiApp);
-// Keep Compat auth persistence aligned with the Account Center on this origin.
-const tobiAuthPersistenceReady=tobiAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
-  .catch(error=>{console.warn("TobiServices-Login-Persistenz konnte nicht abgeglichen werden:",error);});
+// Account Core owns persistence. Do not run a second persistence mutation through
+// Compat at the same time: two SDK instances can briefly report different sessions.
+const tobiAuthPersistenceReady=Promise.resolve();
 
 let activeTobiUser = null;
 let activeTobiProfile = null;
@@ -1601,15 +1601,22 @@ function watchTobiProfile(uid){
 
 tobiAuth.onAuthStateChanged(user=>{
   if(accountCoreReported){
-    // Das Account-Core-Modul ist die Quelle, die auch das Account Center verwendet.
-    // Ein abweichender Compat-Initialzustand darf eine bestehende Sitzung nicht löschen.
-    if(!accountCoreUid || !user || user.isAnonymous || user.uid!==accountCoreUid) return;
-    if(!tobiAuthInitialized){
-      tobiAuthInitialized=true;
-      resolveTobiAuthReady(user);
+    // Das Account-Core-Modul ist normalerweise die Quelle der Sitzung. Wenn es
+    // beim ersten Restore noch "abgemeldet" meldet, aber Compat danach einen
+    // echten, gespeicherten Account liefert, übernimmt Compat vorübergehend.
+    if(!accountCoreUid && user && !user.isAnonymous){
+      accountCoreReported=false;
+      console.warn("Account Core meldet noch keine Sitzung; Compat übernimmt den wiederhergestellten Account.");
+    }else{
+      // Ein abweichender Compat-Initialzustand darf eine andere aktive Sitzung nicht löschen.
+      if(!accountCoreUid || !user || user.isAnonymous || user.uid!==accountCoreUid) return;
+      if(!tobiAuthInitialized){
+        tobiAuthInitialized=true;
+        resolveTobiAuthReady(user);
+      }
+      watchTobiProfile(accountCoreUid);
+      return;
     }
-    watchTobiProfile(accountCoreUid);
-    return;
   }
   activeTobiUser=user&&!user.isAnonymous?user:null;
   if(!activeTobiUser) activeTobiProfile=null;
@@ -2266,7 +2273,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-recognition-leaderboard-20261013";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-recognition-leaderboard-20261013b";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
