@@ -271,7 +271,7 @@
       <div class="logo-tag">Untis Next</div>
       <div class="logo-main"><span class="l1">STUNDEN</span><span class="l2">PLAN</span></div>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
       <button class="themebtn" id="leaderboardBtn" type="button">🏆 Rangliste</button>
       <button class="themebtn" id="themeBtn" type="button">🎨 Themes</button>
@@ -1644,6 +1644,14 @@ window.addEventListener("tobiservices-account-session",event=>{
   accountCoreSyncPublicProfile=typeof detail.syncPublicProfile==="function"
     ? detail.syncPublicProfile
     : null;
+  // If the module SDK reports signed-out while Compat still has a valid persisted
+  // account, keep the existing recognition path alive instead of clearing the session.
+  // A real sign-out will be delivered by the Compat listener as its state settles.
+  if(!user && tobiAuth.currentUser && !tobiAuth.currentUser.isAnonymous){
+    accountCoreReported=false;
+    console.warn("Account Core und Compat synchronisieren sich noch; bestehende Sitzung bleibt aktiv.");
+    return;
+  }
   accountCoreReported=true;
   if(user?.uid && !user.isAnonymous){
     const previousUid=activeTobiUser?.uid;
