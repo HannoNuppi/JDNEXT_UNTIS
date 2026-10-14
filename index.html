@@ -1363,54 +1363,36 @@ async function removeReportedHomework(hwKey,id){
 
 async function reportEntry(hwKey,id,redraw){
   if(wasReported(id)) return;
-  let user;
-  try{ user=await ensureTobiAuthForJdnext(); }
-  catch(error){ showToast(error?.message||"Untis Next konnte Firebase nicht erreichen."); return; }
-  if(!user){
-    showToast("⚠️ Meldungen sind momentan nicht verfügbar");
-    return;
-  }
-  const entry=getHomeworkEntries(hwKey).find(e=>e.id===id);
-  if(!entry || entry.legacy) return;
-  const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(id);
-  const reportRef=entryRef.collection("reports").doc(user.uid);
   try{
-    const nextCount=await tobiDb.runTransaction(async transaction=>{
-      const entrySnap=await transaction.get(entryRef);
-      const reportSnap=await transaction.get(reportRef);
-      if(!entrySnap.exists) throw new Error("Der Eintrag wurde bereits entfernt.");
-      if(reportSnap.exists) throw new Error("already-reported");
-      const current=Number.isSafeInteger(entrySnap.data()?.reportCount)?entrySnap.data().reportCount:0;
-      transaction.set(reportRef,{createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-      transaction.update(entryRef,{reportCount:current+1});
-      return current+1;
-    });
+    await Promise.race([
+      accountCoreReady,
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TobiServices wird noch geladen. Bitte erneut versuchen.")),7000))
+    ]);
+    if(typeof accountCoreReportHomeworkEntry!=="function"){
+      throw new Error("Das gemeinsame TobiServices-Account-Modul konnte nicht geladen werden. Lade die Seite neu.");
+    }
+    const result=await accountCoreReportHomeworkEntry(hwKey,id);
     markReported(id);
-    if(nextCount>=2){
-      try{
-        const removed=await removeReportedHomework(hwKey,id);
-        showToast(removed?"🚩 Zwei Meldungen: Eintrag entfernt":"🚩 Meldung gespeichert");
-      }catch(removalError){
-        console.error("Moderation failed:",removalError);
-        showToast("🚩 Meldung gespeichert; Entfernung konnte nicht abgeschlossen werden");
-      }
+    if(result.nextCount>=2){
+      if(result.removed) showToast("🚩 Zwei Meldungen: Eintrag entfernt");
+      else if(result.removalPending) showToast("🚩 Meldung gespeichert; Entfernung wird erneut geprüft");
+      else showToast("🚩 Meldung gespeichert");
     }else{
       showToast("🚩 Meldung gespeichert");
     }
     redraw();
-  }catch(e){
-    const msg=String(e&&e.message||"").toLowerCase();
-    if(msg.includes("already-reported") || e?.code==="already-exists" || e?.code===6){
+  }catch(error){
+    const msg=String(error?.message||"").toLowerCase();
+    if(msg.includes("already-reported") || error?.code==="already-exists" || error?.code===6){
       markReported(id);
       showToast("🚩 Diesen Eintrag hast du bereits gemeldet");
       redraw();
       return;
     }
-    console.error("Firestore-Meldung fehlgeschlagen:",e);
-    showToast("⚠️ Meldung konnte nicht gespeichert werden");
+    console.error("Firestore-Meldung fehlgeschlagen:",error);
+    showToast(explainFirebaseError(error,"Die Meldung der Hausaufgabe"));
   }
 }
-
 function closeModal(){ document.getElementById("overlay").classList.remove("show"); }
 document.getElementById("overlay").addEventListener("click",(e)=>{ if(e.target.id==="overlay") closeModal(); });
 
@@ -2233,7 +2215,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014b";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
