@@ -39,7 +39,7 @@ Für neue Posts, Bildanhänge, Reports und Münzen muss `Tobiservices-Account/fi
 
 Die Vorschau enthält eine **Gold-Rangliste** im Kopfbereich. Sie sortiert synchronisierte Profile nach dem gemeinsamen Goldmünzen-Guthaben und ist nur für aktive Admins sichtbar. Im Account Center lassen sich ein optionales Profil-Icon und ein rein kosmetischer Titel wählen. Neue Konten starten mit `tags: []` und ohne Profil-Icon. Titel sind ausdrücklich von Tags getrennt und verleihen **keine** Rechte. Die Ranglisten-Collection enthält nur Anzeigename, optionales Icon, Titel und Goldmünzen – keine E-Mail-Adresse oder Tags; ihre Leserechte sind auf aktive Admins beschränkt. Ein Konto erscheint, sobald es sein Ranglistenprofil nach dem Login synchronisiert hat.
 
-Damit die Profiländerungen und die Rangliste funktionieren, muss die aktuelle `firestore.rules` aus dem TobiServices-Account-Repository im Firebase-Projekt `tobiservices` veröffentlicht sein. Ein GitHub-Commit veröffentlicht Firestore-Regeln nicht automatisch.
+Damit Hausaufgaben posten/melden, Profiländerungen und die Rangliste funktionieren, muss die aktuelle `firestore.rules` aus dem TobiServices-Account-Repository im Firebase-Projekt `tobiservices` veröffentlicht sein. Ein GitHub-Commit veröffentlicht Firestore-Regeln nicht automatisch. Am einfachsten ist es, das Repository `Tobiservices-Account` herunterzuladen und dort `deploy_tobiservices_rules.bat` auszuführen. Das Skript veröffentlicht nur die Regeln im Projekt `tobiservices`. **Nicht** `JDNEXT_UNTIS/firestore.rules` dafür verwenden: Dieses Repository gehört zum separaten Legacy-Projekt `next-untis-plus`.
 
 ## Android APK
 
