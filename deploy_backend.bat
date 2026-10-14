@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title JDNEXT Firebase Backend Deployment
+title Legacy JDNEXT / next-untis-plus Deployment
 
 where firebase >nul 2>&1
 if errorlevel 1 (
@@ -11,7 +11,11 @@ if errorlevel 1 (
 )
 
 echo.
-echo === JDNEXT / next-untis-plus ===
+echo === LEGACY JDNEXT / next-untis-plus ===
+echo Hinweis: Dieses Skript betrifft NICHT das Projekt tobiservices.
+echo Neue Hausaufgaben werden in tobiservices gespeichert. Dessen Regeln liegen im Repository
+echo HannoNuppi/Tobiservices-Account und werden dort mit deploy_tobiservices_rules.bat veroeffentlicht.
+echo.
 firebase use next-untis-plus
 if errorlevel 1 goto :fail
 
