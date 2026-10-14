@@ -644,7 +644,7 @@ function explainFirebaseError(error, action="Dieser Vorgang"){
     return "Firebase ist momentan nicht erreichbar. Prüfe deine Internetverbindung und versuche es erneut.";
   }
   if(code==="permission-denied" || /missing or insufficient permissions/i.test(message)){
-    return "Firebase hat den Vorgang abgelehnt. Öffne im Projekt „tobiservices“ Firestore Database → Rules und veröffentliche die aktuelle firestore.rules aus dem TobiServices-Account-Repository.";
+    return "TobiServices-Firestore hat den Schreibvorgang abgelehnt. Hausaufgaben werden im Projekt „tobiservices“ gespeichert. Veröffentliche dort die firestore.rules aus dem Repository „Tobiservices-Account“ (nicht die Regeln aus „JDNEXT_UNTIS“, die gehören zu next-untis-plus). Dafür gibt es deploy_tobiservices_rules.bat im TobiServices-Account-Repository.";
   }
   if(code==="auth/too-many-requests"){
     return "Firebase hat zu viele Anmeldeversuche erkannt. Bitte versuche es später erneut.";
@@ -927,86 +927,28 @@ async function loadLegacyHomework(){
 async function saveHomeworkEntry(hwKey,entry,images=[]){
   setSync("Speichert…");
   try{
-    const user=await ensureTobiAuthForJdnext();
-    if(!user) throw new Error("Untis Next konnte keine Firebase-Anmeldung herstellen.");
-    let profile=null;
-    if(!user.isAnonymous) profile=await ensureTobiProfile(user);
-
-    const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(entry.id);
-    const ownerRef=tobiDb.collection("jdnextHomeworkPrivate").doc(hwKey).collection("entries").doc(entry.id);
+    // The Account Core module owns TobiServices Auth and Firestore writes.
+    // Waiting for its session event prevents a stale Compat anonymous user from
+    // replacing or masking the signed-in TobiServices account.
+    await Promise.race([
+      accountCoreReady,
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TobiServices wird noch geladen. Bitte kurz warten und erneut speichern.")),7000))
+    ]);
+    if(typeof accountCoreSaveHomeworkEntry!=="function"){
+      throw new Error("Das TobiServices-Account-Modul konnte nicht geladen werden. Lade Untis Next neu (Strg+F5).");
+    }
+    const result=await accountCoreSaveHomeworkEntry({
+      hwKey,
+      entryId:entry.id,
+      text:entry.text,
+      author:entry.author,
+      images
+    });
     const imageMetadata=(Array.isArray(images)?images.slice(0,3):[]).map(image=>({
       kind:"firestore",
       imageId:String(image.imageId),
       filename:String(image.filename||"bild.jpg").slice(0,120)
     }));
-    const eventId="reward-"+hwKey+"-"+entry.id;
-    const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
-    const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
-    let rewardApplied=false;
-
-    await tobiDb.runTransaction(async transaction=>{
-      const entrySnap=await transaction.get(entryRef);
-      // Private metadata and coin-event documents intentionally cannot be read by clients.
-      // Their create-only rules reject ID reuse without exposing those documents.
-      if(entrySnap.exists) throw new Error("Dieser Hausaufgabeneintrag existiert bereits.");
-
-      let authorTobiUid=null;
-      // Private record of the TobiServices account used for this post, separate from reward eligibility.
-      const authorTobiAccountUid=user.isAnonymous ? null : user.uid;
-      let profileRef=null;
-      let profileSnap=null;
-      if(!user.isAnonymous && profile?.disabled!==true &&
-         (Number.isSafeInteger(profile?.goldCoins)?profile.goldCoins:0)>-50){
-        profileRef=tobiDb.collection("users").doc(user.uid);
-        profileSnap=await transaction.get(profileRef);
-        if(profileSnap.exists &&
-           profileSnap.data()?.disabled!==true &&
-           (Number.isSafeInteger(profileSnap.data()?.goldCoins)?profileSnap.data().goldCoins:0)>-50){
-          authorTobiUid=user.uid;
-        }
-      }
-
-      if(authorTobiUid){
-        const before=Number.isSafeInteger(profileSnap.data()?.goldCoins)?profileSnap.data().goldCoins:0;
-        const after=before+10;
-        if(!Number.isSafeInteger(after)) throw new Error("Der Münzstand ist außerhalb des erlaubten Zahlenbereichs.");
-        transaction.update(profileRef,{
-          goldCoins:after,
-          lastProfileChangeAt:stamp(),
-          lastJdnextCoinEventId:eventId
-        });
-        transaction.set(eventRef,{
-          uid:user.uid, amount:10, type:"homework-post", hwKey, entryId:entry.id,
-          createdAt:stamp()
-        });
-        rewardApplied=true;
-      }
-
-      transaction.set(entryRef,{
-        text:entry.text,
-        author:entry.author,
-        images:imageMetadata,
-        reportCount:0,
-        createdAt:stamp()
-      });
-      transaction.set(ownerRef,{
-        authorAuthUid:user.uid,
-        authorTobiUid:authorTobiUid,
-        authorTobiAccountUid:authorTobiAccountUid,
-        createdAt:stamp()
-      });
-      (Array.isArray(images)?images.slice(0,3):[]).forEach(image=>{
-        if(typeof image.dataUrl!=="string" || image.dataUrl.length>800000){
-          throw new Error("Ein Bild überschreitet die erlaubte Uploadgröße.");
-        }
-        transaction.set(entryRef.collection("images").doc(String(image.imageId)),{
-          filename:String(image.filename||"bild.jpg").slice(0,120),
-          dataUrl:image.dataUrl,
-          createdAt:stamp()
-        });
-      });
-    });
-
     if(!sharedHomeworkData[hwKey]) sharedHomeworkData[hwKey]=[];
     sharedHomeworkData[hwKey].push({
       ...entry,
@@ -1017,13 +959,13 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       legacy:false
     });
     rebuildHomeworkData();
-    setSync(rewardApplied
+    setSync(result.rewardQueued
       ? "● Gespeichert · +10 Goldmünzen gutgeschrieben"
       : "● Gespeichert · live für alle sichtbar");
-    return {ok:true,rewardQueued:rewardApplied};
-  }catch(e){
-    const friendly=explainFirebaseError(e,"Das Speichern der Hausaufgabe");
-    console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
+    return {ok:true,rewardQueued:Boolean(result.rewardQueued)};
+  }catch(error){
+    const friendly=explainFirebaseError(error,"Das Speichern der Hausaufgabe");
+    console.error("Hausaufgabe konnte nicht gespeichert werden:",error);
     setSync(friendly);
     throw new Error(friendly);
   }
@@ -1543,6 +1485,8 @@ function updateTobiLoginButton(){
 let accountCoreReported=false;
 let accountCoreSetEquippedTheme=null;
 let accountCoreRefreshProfile=null;
+let accountCoreSaveHomeworkEntry=null;
+let accountCoreReportHomeworkEntry=null;
 let accountCoreGetLeaderboard=null;
 let accountCoreSyncPublicProfile=null;
 let resolveAccountCoreReady;
@@ -1650,6 +1594,12 @@ window.addEventListener("tobiservices-account-session",event=>{
     : null;
   accountCoreRefreshProfile=typeof detail.refreshProfileFromServer==="function"
     ? detail.refreshProfileFromServer
+    : null;
+  accountCoreSaveHomeworkEntry=typeof detail.saveJdnextHomeworkEntry==="function"
+    ? detail.saveJdnextHomeworkEntry
+    : null;
+  accountCoreReportHomeworkEntry=typeof detail.reportJdnextHomeworkEntry==="function"
+    ? detail.reportJdnextHomeworkEntry
     : null;
   accountCoreGetLeaderboard=typeof detail.getLeaderboard==="function"
     ? detail.getLeaderboard
@@ -1963,7 +1913,7 @@ function renderThemeMenu(){
     '<h2>🎨 Themes</h2>'+
     '<div class="msub">Kaufe besondere Looks für deine Stundenplan-App. Jedes Theme zeigt seinen Preis.</div>'+
     '<div class="theme-balance"><span>DEIN GUTHABEN</span><strong>✦ '+escapeHtml(status)+'</strong></div>'+
-    '<div class="theme-grid">'+[...THEME_CATALOG,...EVENT_THEMES.filter(theme=>owned.has(theme.id))].map(theme=>{
+    '<div class="theme-grid">'+[...THEME_CATALOG,...EVENT_THEMES.filter(theme=>owned.has(theme.id)||(theme.id==="AdminMatrix"&&isTobiAdmin()))].map(theme=>{
       const hasTheme=owned.has(theme.id);
       const isEquipped=equipped===theme.id;
       let action="login",label="Anmelden zum Kauf",disabled=false,buttonClass="";
@@ -2283,7 +2233,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-recognition-leaderboard-20261013d";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
@@ -2292,7 +2242,9 @@ onUser((user, profile) => {
       setEquippedTheme,
       refreshProfileFromServer,
       getLeaderboard,
-      syncPublicProfile
+      syncPublicProfile,
+      saveJdnextHomeworkEntry,
+      reportJdnextHomeworkEntry
     }
   }));
 });
