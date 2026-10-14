@@ -1408,8 +1408,9 @@ function showToast(msg){
 }
 document.getElementById("leaderboardBtn").onclick=openLeaderboard;
 document.getElementById("loginBtn").onclick=async()=>{
-  try{await Promise.race([Promise.all([tobiAuthReady,accountCoreReady]),new Promise(resolve=>setTimeout(resolve,1500))]);}catch{}
-  const signedIn=Boolean(activeTobiUser || accountCoreUid || (tobiAuth.currentUser&&!tobiAuth.currentUser.isAnonymous));
+  try{await Promise.race([accountCoreReady,new Promise(resolve=>setTimeout(resolve,2500))]);}catch{}
+  // Core auth is authoritative; never treat a leftover Compat session as a signed-in account.
+  const signedIn=Boolean(activeTobiUser && activeTobiProfile);
   location.href=signedIn ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
 };
 
@@ -2205,7 +2206,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry, purchaseJdnextTheme, setMaintenanceBypass, checkHalloweenThemeUnlock } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-shared-auth-writes-20261014e";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry, purchaseJdnextTheme, setMaintenanceBypass, checkHalloweenThemeUnlock } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-shared-auth-writes-20261014f";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
