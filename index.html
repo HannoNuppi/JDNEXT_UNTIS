@@ -1541,24 +1541,19 @@ function watchTobiProfile(uid){
 }
 
 tobiAuth.onAuthStateChanged(user=>{
-  if(accountCoreReported){
-    // Das Account-Core-Modul ist normalerweise die Quelle der Sitzung. Wenn es
-    // beim ersten Restore noch "abgemeldet" meldet, aber Compat danach einen
-    // echten, gespeicherten Account liefert, übernimmt Compat vorübergehend.
-    if(!accountCoreUid && user && !user.isAnonymous){
-      accountCoreReported=false;
-      console.warn("Account Core meldet noch keine Sitzung; Compat übernimmt den wiederhergestellten Account.");
-    }else{
-      // Ein abweichender Compat-Initialzustand darf eine andere aktive Sitzung nicht löschen.
-      if(!accountCoreUid || !user || user.isAnonymous || user.uid!==accountCoreUid) return;
-      if(!tobiAuthInitialized){
-        tobiAuthInitialized=true;
-        resolveTobiAuthReady(user);
-      }
-      watchTobiProfile(accountCoreUid);
-      return;
-    }
+  if(!tobiAuthInitialized){
+    tobiAuthInitialized=true;
+    resolveTobiAuthReady(user);
   }
+  if(accountCoreReported){
+    // The modular Account Core is the source of truth. Compat only mirrors the
+    // same UID for read listeners; a different/stale account must never replace it.
+    if(accountCoreUid && user && !user.isAnonymous && user.uid===accountCoreUid){
+      watchTobiProfile(accountCoreUid);
+    }
+    return;
+  }
+  // Temporary fallback before the modular Account Core has emitted its session.
   activeTobiUser=user&&!user.isAnonymous?user:null;
   if(!activeTobiUser) activeTobiProfile=null;
   if(!tobiAuthInitialized){
@@ -1607,14 +1602,8 @@ window.addEventListener("tobiservices-account-session",event=>{
   accountCoreSyncPublicProfile=typeof detail.syncPublicProfile==="function"
     ? detail.syncPublicProfile
     : null;
-  // If the module SDK reports signed-out while Compat still has a valid persisted
-  // account, keep the existing recognition path alive instead of clearing the session.
-  // A real sign-out will be delivered by the Compat listener as its state settles.
-  if(!user && tobiAuth.currentUser && !tobiAuth.currentUser.isAnonymous){
-    accountCoreReported=false;
-    console.warn("Account Core und Compat synchronisieren sich noch; bestehende Sitzung bleibt aktiv.");
-    return;
-  }
+  // The modular Account Core owns the active account session. A separate Compat
+  // identity (especially a leftover anonymous session) must never mask sign-in state.
   accountCoreReported=true;
   if(user?.uid && !user.isAnonymous){
     const previousUid=activeTobiUser?.uid;
