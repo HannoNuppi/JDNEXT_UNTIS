@@ -1979,8 +1979,7 @@ async function retryAccountProfileLoad(uid){
     if(delay) await new Promise(resolve=>setTimeout(resolve,delay));
     if(!activeTobiUser || activeTobiUser.uid!==uid) return;
     try{
-      if(!accountCoreRefreshProfile) break;
-      const profile=await accountCoreRefreshProfile(uid);
+      const profile=await refreshActiveTobiProfileFromServer();
       if(!profile || profile.uid!==uid) continue;
       if(!activeTobiUser || activeTobiUser.uid!==uid) return;
       activeTobiProfile=profile;
@@ -2235,7 +2234,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014c";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014d";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
