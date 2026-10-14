@@ -649,6 +649,7 @@ function explainFirebaseError(error, action="Dieser Vorgang"){
   if(code==="auth/too-many-requests"){
     return "Firebase hat zu viele Anmeldeversuche erkannt. Bitte versuche es später erneut.";
   }
+  if(!code && message) return message;
   const detail=code ? " ("+code+")" : "";
   return action+" ist fehlgeschlagen"+detail+". Prüfe die Firebase-Einstellungen und die Internetverbindung.";
 }
@@ -1418,21 +1419,26 @@ document.getElementById("maintenanceBypassBtn").onclick=async()=>{
     showToast("Nur ein angemeldeter Admin kann den Wartungsbypass verwenden.");
     return;
   }
+  if(typeof accountCoreSetMaintenanceBypass!=="function"){
+    showToast("TobiServices wird noch geladen. Bitte erneut versuchen.");
+    return;
+  }
   const enabled=activeTobiProfile?.maintenanceBypass!==true;
   button.disabled=true;
   try{
-    await tobiDb.collection("users").doc(activeTobiUser.uid).update({
-      maintenanceBypass:enabled,
-      lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp()
-    });
-    activeTobiProfile={...activeTobiProfile,maintenanceBypass:enabled};
+    const updated=await accountCoreSetMaintenanceBypass(enabled);
+    if(activeTobiUser?.uid!==updated.uid && updated.uid){
+      throw new Error("Die Sitzung hat während des Speicherns gewechselt.");
+    }
+    activeTobiProfile={...activeTobiProfile,...updated,maintenanceBypass:enabled};
+    updateTobiLoginButton();
     refreshMaintenanceAccess();
     showToast(enabled
       ? "🛠️ Wartungsbypass aktiviert."
       : "🛠️ Wartungsbypass deaktiviert.");
   }catch(error){
     console.error("Maintenance bypass update failed:",error);
-    showToast("Bypass konnte nicht gespeichert werden. Prüfe die TobiServices-Firestore-Regeln.");
+    showToast(explainFirebaseError(error,"Der Wartungsbypass"));
   }finally{
     renderMaintenanceBypassButton();
   }
@@ -1469,6 +1475,9 @@ let accountCoreSetEquippedTheme=null;
 let accountCoreRefreshProfile=null;
 let accountCoreSaveHomeworkEntry=null;
 let accountCoreReportHomeworkEntry=null;
+let accountCorePurchaseTheme=null;
+let accountCoreSetMaintenanceBypass=null;
+let accountCoreCheckHalloweenUnlock=null;
 let accountCoreGetLeaderboard=null;
 let accountCoreSyncPublicProfile=null;
 let resolveAccountCoreReady;
@@ -1583,6 +1592,15 @@ window.addEventListener("tobiservices-account-session",event=>{
   accountCoreReportHomeworkEntry=typeof detail.reportJdnextHomeworkEntry==="function"
     ? detail.reportJdnextHomeworkEntry
     : null;
+  accountCorePurchaseTheme=typeof detail.purchaseJdnextTheme==="function"
+    ? detail.purchaseJdnextTheme
+    : null;
+  accountCoreSetMaintenanceBypass=typeof detail.setMaintenanceBypass==="function"
+    ? detail.setMaintenanceBypass
+    : null;
+  accountCoreCheckHalloweenUnlock=typeof detail.checkHalloweenThemeUnlock==="function"
+    ? detail.checkHalloweenThemeUnlock
+    : null;
   accountCoreGetLeaderboard=typeof detail.getLeaderboard==="function"
     ? detail.getLeaderboard
     : null;
@@ -1641,34 +1659,18 @@ function localDateIsHalloween(){
 const halloweenUnlockInFlight = new Set();
 async function maybeUnlockHalloweenTheme(uid){
   if(!uid || !activeTobiUser || activeTobiUser.uid!==uid ||
-     !localDateIsHalloween() || !activeTobiProfile || activeTobiProfile.disabled===true) return;
-  if(activeTobiProfile.halloweenUnlockedAt ||
-     (Array.isArray(activeTobiProfile.ownedThemes) && activeTobiProfile.ownedThemes.includes("HalloweenEvent"))) return;
-  if(halloweenUnlockInFlight.has(uid)) return;
-  halloweenUnlockInFlight.add(uid);
+     typeof accountCoreCheckHalloweenUnlock!=="function") return;
   try{
-    const ref=tobiDb.collection("users").doc(uid);
-    const unlocked=await tobiDb.runTransaction(async transaction=>{
-      const snap=await transaction.get(ref);
-      if(!snap.exists) return false;
-      const profile=snap.data()||{};
-      if(profile.disabled===true) return false;
-      const oldOwned=Array.isArray(profile.ownedThemes)?profile.ownedThemes:[];
-      if(oldOwned.includes("HalloweenEvent")) return false;
-      transaction.update(ref,{
-        ownedThemes:[...oldOwned,"HalloweenEvent"],
-        halloweenUnlockedAt:firebase.firestore.FieldValue.serverTimestamp(),
-        lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp()
-      });
-      return true;
-    });
-    if(unlocked && activeTobiUser?.uid===uid){
-      showToast("🎃 Halloween-Theme freigeschaltet!");
-    }
+    const profile=await accountCoreCheckHalloweenUnlock();
+    if(activeTobiUser?.uid!==uid || !profile || profile.uid!==uid) return;
+    activeTobiProfile=profile;
+    updateTobiLoginButton();
+    applyTheme(currentEquippedTheme());
+    renderMaintenanceBypassButton();
+    refreshMaintenanceAccess();
+    if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
   }catch(error){
-    console.warn("Halloween-Freischaltung konnte nicht gespeichert werden. Prüfe die TobiServices-Firestore-Regeln:",error);
-  }finally{
-    halloweenUnlockInFlight.delete(uid);
+    console.warn("Halloween-Theme konnte nicht aktualisiert werden:",error);
   }
 }
 function berlinDateTimeToTimestamp(year,monthIndex,day,hour=0,minute=0,second=0){
@@ -2098,46 +2100,26 @@ async function purchaseTheme(theme){
     showToast("Dein TobiServices-Konto ist gesperrt.");
     return;
   }
+  if(typeof accountCorePurchaseTheme!=="function"){
+    showToast("TobiServices wird noch geladen. Bitte erneut versuchen.");
+    return;
+  }
   try{
-    const profileRef=tobiDb.collection("users").doc(activeTobiUser.uid);
-    const eventId="theme-"+activeTobiUser.uid+"-"+theme.id;
-    const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
-    const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
-    const result=await tobiDb.runTransaction(async transaction=>{
-      const profileSnap=await transaction.get(profileRef);
-      if(!profileSnap.exists) throw new Error("Dein TobiServices-Profil wurde nicht gefunden.");
-      const profile=profileSnap.data()||{};
-      if(profile.disabled===true) throw new Error("Dein TobiServices-Konto ist gesperrt.");
-      const coins=Number.isSafeInteger(profile.goldCoins)?profile.goldCoins:0;
-      const owned=Array.isArray(profile.ownedThemes)?profile.ownedThemes:[];
-      if(owned.includes(theme.id)) return {alreadyOwned:true,coins,owned};
-      if(coins<theme.price) throw new Error("Du brauchst mindestens "+theme.price+" Goldmünzen für dieses Theme.");
-      const nextOwned=[...owned,theme.id];
-      transaction.update(profileRef,{
-        goldCoins:coins-theme.price,
-        ownedThemes:nextOwned,
-        lastProfileChangeAt:stamp(),
-        lastJdnextCoinEventId:eventId
-      });
-      transaction.set(eventRef,{
-        uid:activeTobiUser.uid,
-        amount:-theme.price,
-        type:"theme-purchase",
-        themeId:theme.id,
-        createdAt:stamp()
-      });
-      return {alreadyOwned:false,coins:coins-theme.price,owned:nextOwned};
-    });
-    activeTobiProfile={...activeTobiProfile,goldCoins:result.coins,ownedThemes:result.owned};
+    const updated=await accountCorePurchaseTheme(theme.id);
+    if(!activeTobiUser || (updated.uid && activeTobiUser.uid!==updated.uid)){
+      throw new Error("Die Sitzung hat während des Theme-Kaufs gewechselt.");
+    }
+    activeTobiProfile={...activeTobiProfile,...updated};
     updateTobiLoginButton();
-    showToast(result.alreadyOwned?"Dieses Theme gehört dir bereits.":"🎨 "+theme.name+" gekauft · −"+theme.price+" Goldmünzen");
+    showToast(updated.alreadyOwned
+      ? "Dieses Theme gehört dir bereits."
+      : "🎨 "+theme.name+" gekauft · −"+theme.price+" Goldmünzen");
     renderThemeMenu();
   }catch(error){
     console.error("Theme purchase failed:",error);
     showToast(explainFirebaseError(error,"Der Theme-Kauf"));
   }
 }
-
 document.getElementById("themeBtn").onclick=openThemeMenu;
 
 // ---- PWA / App-Installation ----
@@ -2234,7 +2216,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014d";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry, purchaseJdnextTheme, setMaintenanceBypass, checkHalloweenThemeUnlock } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-shared-auth-writes-20261014e";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
@@ -2245,7 +2227,10 @@ onUser((user, profile) => {
       getLeaderboard,
       syncPublicProfile,
       saveJdnextHomeworkEntry,
-      reportJdnextHomeworkEntry
+      reportJdnextHomeworkEntry,
+      purchaseJdnextTheme,
+      setMaintenanceBypass,
+      checkHalloweenThemeUnlock
     }
   }));
 });
