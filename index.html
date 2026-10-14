@@ -1925,23 +1925,43 @@ function renderThemeMenu(){
 async function refreshActiveTobiProfileFromServer(){
   const user=activeTobiUser;
   if(!user?.uid || user.isAnonymous) return activeTobiProfile;
+  let coreError=null;
   if(accountCoreRefreshProfile){
-    const fresh=await accountCoreRefreshProfile(user.uid);
-    if(activeTobiUser?.uid!==user.uid) return null;
-    if(fresh?.uid===user.uid){
-      activeTobiProfile=fresh;
-      updateTobiLoginButton();
-      return fresh;
+    try{
+      const fresh=await accountCoreRefreshProfile(user.uid);
+      if(activeTobiUser?.uid!==user.uid) return null;
+      if(fresh?.uid===user.uid){
+        activeTobiProfile=fresh;
+        updateTobiLoginButton();
+        renderMaintenanceBypassButton();
+        return fresh;
+      }
+      coreError=new Error("Account Core meldete kein passendes Profil.");
+    }catch(error){
+      coreError=error;
+      console.warn("Modulare Profilaktualisierung fehlgeschlagen; prüfe die gemeinsame Sitzung:",error);
     }
-    throw new Error("Dein TobiServices-Profil konnte nicht vom Server gelesen werden.");
   }
-  // Fallback for clients that still have an older Account Core module cached.
-  const snap=await tobiDb.collection("users").doc(user.uid).get({source:"server"});
-  if(activeTobiUser?.uid!==user.uid) return null;
-  if(!snap.exists) throw new Error("Dein TobiServices-Profil wurde nicht gefunden.");
-  activeTobiProfile={uid:user.uid,...(snap.data()||{})};
-  updateTobiLoginButton();
-  return activeTobiProfile;
+  // Compat fallback is allowed only for the exact same signed-in UID. Never
+  // overwrite the current session with a stale anonymous or different account.
+  const compatUser=tobiAuth.currentUser;
+  if(compatUser && !compatUser.isAnonymous && compatUser.uid===user.uid){
+    try{
+      const snap=await tobiDb.collection("users").doc(user.uid).get({source:"server"});
+      if(activeTobiUser?.uid!==user.uid) return null;
+      if(snap.exists){
+        activeTobiProfile={uid:user.uid,...(snap.data()||{})};
+        updateTobiLoginButton();
+        renderMaintenanceBypassButton();
+        return activeTobiProfile;
+      }
+    }catch(error){
+      console.warn("Compat-Profil-Fallback konnte nicht gelesen werden:",error);
+    }
+  }
+  // Keep the last known profile for display if the refresh is transiently unavailable.
+  if(activeTobiUser?.uid===user.uid && activeTobiProfile) return activeTobiProfile;
+  throw new Error("Dein TobiServices-Profil ist noch nicht synchronisiert. Bitte melde dich im Account Center erneut an."+(coreError?.code?" ("+coreError.code+")":""));
 }
 function openThemeMenu(){
   renderThemeMenu();
@@ -2215,7 +2235,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014b";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=untis-homework-auth-repair-20261014c";
 onUser((user, profile) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
