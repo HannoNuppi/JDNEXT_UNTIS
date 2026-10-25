@@ -1409,8 +1409,9 @@ function showToast(msg){
 document.getElementById("leaderboardBtn").onclick=openLeaderboard;
 document.getElementById("loginBtn").onclick=async()=>{
   try{await Promise.race([accountCoreReady,new Promise(resolve=>setTimeout(resolve,2500))]);}catch{}
-  // Core auth is authoritative; never treat a leftover Compat session as a signed-in account.
-  const signedIn=Boolean(activeTobiUser && activeTobiProfile);
+  // A valid Firebase login counts as signed in even while the profile is still loading.
+  // Do not send a signed-in user back to the login form just because Firestore is slow.
+  const signedIn=Boolean(activeTobiUser);
   location.href=signedIn ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
 };
 
@@ -1458,6 +1459,11 @@ function updateTobiLoginButton(){
   if(activeTobiUser && activeTobiProfile?.disabled===true){
     button.textContent="⛔ Konto gesperrt";
     button.title="Dein Konto ist für TobiServices-Dienste gesperrt. Hilfe im Account Center.";
+  }else if(activeTobiUser && !activeTobiProfile){
+    button.textContent=accountCoreProfileError ? "Account-Fehler" : "Account wird geladen…";
+    button.title=accountCoreProfileError
+      ? "Anmeldung erkannt, aber das TobiServices-Profil konnte nicht geladen werden: "+accountCoreProfileError
+      : "Anmeldung erkannt; TobiServices-Profil wird geladen.";
   }else if(activeTobiUser){
     const name=activeTobiProfile?.displayName||activeTobiUser.displayName||activeTobiUser.email||"Angemeldet";
     const coins=Number.isSafeInteger(activeTobiProfile?.goldCoins)?activeTobiProfile.goldCoins:0;
@@ -1472,6 +1478,7 @@ function updateTobiLoginButton(){
 }
 
 let accountCoreReported=false;
+let accountCoreProfileError=null;
 let accountCoreSetEquippedTheme=null;
 let accountCoreRefreshProfile=null;
 let accountCoreSaveHomeworkEntry=null;
@@ -1495,8 +1502,13 @@ function handleTobiProfileSnapshot(snapshot){
   // The modular Account Core supplies the session's profile. Do not overwrite it
   // with an older cached Compat snapshot; that can hide a just-granted event theme.
   if(snapshot.metadata?.fromCache && activeTobiProfile) return;
-  if(snapshot.exists) activeTobiProfile=snapshot.data()||{};
-  else if(!activeTobiProfile) activeTobiProfile=null;
+  if(snapshot.exists){
+    activeTobiProfile={uid:snapshot.id,...(snapshot.data()||{})};
+    accountCoreProfileError=null;
+  }else if(!snapshot.metadata?.fromCache){
+    activeTobiProfile=null;
+    accountCoreProfileError="Für dieses Konto ist kein TobiServices-Profil vorhanden.";
+  }
   if(activeTobiProfile && activeTobiUser && activeTobiProfile.disabled!==true && accountCoreSyncPublicProfile){
     void accountCoreSyncPublicProfile(activeTobiProfile).catch(error=>
       console.warn("Ranglisten-Eintrag konnte nicht synchronisiert werden:",error)
@@ -1515,7 +1527,14 @@ function handleTobiProfileSnapshot(snapshot){
   if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
 }
 function watchTobiProfile(uid){
-  if(!uid || tobiProfileWatchedUid===uid) return;
+  const compatUser=tobiAuth.currentUser;
+  // Never start a Firestore listener under a different or anonymous Compat
+  // session. If Auth finishes restoring later, the Auth observer will retry.
+  if(!uid || !compatUser || compatUser.isAnonymous || compatUser.uid!==uid){
+    if(tobiProfileWatchedUid===uid) stopTobiProfileWatch();
+    return;
+  }
+  if(tobiProfileWatchedUid===uid) return;
   stopTobiProfileWatch();
   tobiProfileWatchedUid=uid;
   tobiProfileUnsubscribe=tobiDb.collection("users").doc(uid).onSnapshot(
@@ -1551,6 +1570,8 @@ tobiAuth.onAuthStateChanged(user=>{
     // same UID for read listeners; a different/stale account must never replace it.
     if(accountCoreUid && user && !user.isAnonymous && user.uid===accountCoreUid){
       watchTobiProfile(accountCoreUid);
+    }else{
+      stopTobiProfileWatch();
     }
     return;
   }
@@ -1608,6 +1629,7 @@ window.addEventListener("tobiservices-account-session",event=>{
   accountCoreReported=true;
   if(user?.uid && !user.isAnonymous){
     const previousUid=activeTobiUser?.uid;
+    accountCoreProfileError=profile ? null : String(detail.profileError?.message||detail.profileError?.code||"Profil wird erneut geladen.");
     accountCoreUid=user.uid;
     activeTobiUser={uid:user.uid,email:user.email||"",displayName:user.displayName||"",isAnonymous:false};
     // Avoid clearing a profile for the same account if its first Firestore read
@@ -1627,6 +1649,7 @@ window.addEventListener("tobiservices-account-session",event=>{
     if(!profile) void retryAccountProfileLoad(user.uid);
   }else{
     accountCoreUid=null;
+    accountCoreProfileError=null;
     activeTobiUser=null;
     activeTobiProfile=null;
     stopTobiProfileWatch();
@@ -1967,6 +1990,7 @@ function openThemeMenu(){
 
 async function retryAccountProfileLoad(uid){
   const waits=[0,350,900,1700];
+  let lastError=null;
   for(const delay of waits){
     if(delay) await new Promise(resolve=>setTimeout(resolve,delay));
     if(!activeTobiUser || activeTobiUser.uid!==uid) return;
@@ -1975,6 +1999,7 @@ async function retryAccountProfileLoad(uid){
       if(!profile || profile.uid!==uid) continue;
       if(!activeTobiUser || activeTobiUser.uid!==uid) return;
       activeTobiProfile=profile;
+      accountCoreProfileError=null;
       updateTobiLoginButton();
       applyTheme(currentEquippedTheme());
       renderMaintenanceBypassButton();
@@ -1987,8 +2012,14 @@ async function retryAccountProfileLoad(uid){
       if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
       return;
     }catch(error){
+      lastError=error;
       console.warn("Account-Profil wird erneut geladen:",error);
     }
+  }
+  if(activeTobiUser?.uid===uid && !activeTobiProfile){
+    accountCoreProfileError=String(lastError?.message||"Profil konnte nach mehreren Versuchen nicht geladen werden.");
+    updateTobiLoginButton();
+    showToast("TobiServices-Anmeldung erkannt, aber das Profil konnte nicht geladen werden. Ursache: "+accountCoreProfileError);
   }
 }
 async function openLeaderboard(){
@@ -2207,11 +2238,12 @@ startMaintenanceListener();
 </script>
 <script type="module">
 import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry, purchaseJdnextTheme, setMaintenanceBypass, checkHalloweenThemeUnlock } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-core-stability-20261014c";
-onUser((user, profile) => {
+onUser((user, profile, profileError) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
       user: user ? { uid:user.uid, email:user.email||"", displayName:user.displayName||"", isAnonymous:user.isAnonymous===true } : null,
       profile,
+      profileError: profileError ? { code:String(profileError.code||""), message:String(profileError.message||profileError) } : null,
       setEquippedTheme,
       refreshProfileFromServer,
       getLeaderboard,
