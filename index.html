@@ -7,10 +7,7 @@
 <link id="themeFavicon" rel="icon" href="./icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 
 <style>
   :root{
@@ -144,7 +141,6 @@
     display:none; align-items:center; justify-content:center; z-index:50; padding:16px;
   }
   .overlay.show{display:flex;}
-  body.maintenance-pending .wrap{visibility:hidden;}
   .maintenance-overlay{
     position:fixed; inset:0; display:none; align-items:center; justify-content:center;
     z-index:100; padding:24px; background:rgba(5,6,20,.86); backdrop-filter:blur(8px);
@@ -246,17 +242,38 @@
   .themebtn{border-color:color-mix(in srgb,var(--cyan) 45%,transparent);color:var(--cyan);background:color-mix(in srgb,var(--cyan) 9%,transparent)}
   @media(max-width:520px){.theme-grid{grid-template-columns:1fr}.theme-preview{height:50px}.maintenance-bypass-btn{width:100%}}
 
+  /* Matrix remains inactive unless the Admin Matrix theme is selected. */
+  #matrixRain{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.62;mix-blend-mode:screen}
+  #matrixRain[hidden]{display:none}
+  html[data-jdnext-theme="adminmatrix"] #matrixRain{opacity:.72}
+  html[data-jdnext-theme="adminmatrix"] body{background:#010604}
+  html[data-jdnext-theme="adminmatrix"] body::before{opacity:.1}
+  html[data-jdnext-theme="adminmatrix"] .tt-wrap,
+  html[data-jdnext-theme="adminmatrix"] .weeknav,
+  html[data-jdnext-theme="adminmatrix"] .theme-card{backdrop-filter:blur(3px);border-color:rgba(50,255,115,.28)}
+  html[data-jdnext-theme="adminmatrix"] .logo-main span{text-shadow:0 0 12px rgba(50,255,115,.7);filter:none}
+  html[data-jdnext-theme="adminmatrix"] .weekpill{background:linear-gradient(90deg,#064d20,#0a8f37);box-shadow:0 0 12px rgba(50,255,115,.22)}
+  html[data-jdnext-theme="halloweenevent"] body{background:
+    radial-gradient(900px 600px at 85% -10%,rgba(139,55,200,.28),transparent 62%),
+    radial-gradient(900px 650px at -10% 110%,rgba(255,105,25,.24),transparent 60%),
+    linear-gradient(160deg,var(--bg-a),var(--bg-b) 55%,var(--bg-c))}
+  @keyframes halloweenGlow{0%,100%{text-shadow:0 0 7px rgba(255,115,40,.35)}50%{text-shadow:0 0 14px rgba(197,120,255,.75)}}
+  html[data-jdnext-theme="halloweenevent"] .logo-main span{animation:halloweenGlow 3s ease-in-out infinite}
+  @media(prefers-reduced-motion:reduce){html[data-jdnext-theme="halloweenevent"] .logo-main span{animation:none}}
+
 </style>
 </head>
 <body class="maintenance-pending">
+<canvas id="matrixRain" aria-hidden="true" hidden></canvas>
 <div class="wrap">
   <div class="topbar">
     <div class="logo">
       <div class="logo-tag">Untis Next</div>
       <div class="logo-main"><span class="l1">STUNDEN</span><span class="l2">PLAN</span></div>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
+      <button class="themebtn" id="leaderboardBtn" type="button" hidden style="display:none">🏆 Rangliste</button>
       <button class="themebtn" id="themeBtn" type="button">🎨 Themes</button>
       <button class="loginbtn" id="loginBtn">TobiServices Account</button>
     </div>
@@ -274,7 +291,7 @@
     <button class="navbtn" id="nextWeek">›</button>
   </div>
 
-  <div class="tt-wrap"><div class="timetable" id="timetable"></div></div>
+  <div class="tt-wrap"><div class="timetable" id="timetable"><div class="cell free" style="grid-column:1/-1;text-align:center">Stundenplan wird geladen…</div></div></div>
   <div class="syncbar" id="syncBar"></div>
 </div>
 
@@ -290,6 +307,9 @@
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 const OLD_FIREBASE_CONFIG = Object.freeze({
   apiKey: "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg",
@@ -318,13 +338,37 @@ const oldFirebaseApp = firebase.apps.find(app=>app.options.projectId===OLD_FIREB
   || firebase.initializeApp(OLD_FIREBASE_CONFIG,"JDNEXT_Old");
 const oldAuth = firebase.auth(oldFirebaseApp);
 const db = firebase.firestore(oldFirebaseApp);
-const jdFunctions = firebase.functions(oldFirebaseApp, "europe-west1");
-const resolveDiscordImageCall = jdFunctions.httpsCallable("resolveJdnextDiscordImage");
+// Firebase Functions is loaded only when an old Discord image actually needs resolving.
+let resolveDiscordImageCallPromise = null;
+async function resolveDiscordImageCall(payload){
+  if(!resolveDiscordImageCallPromise){
+    resolveDiscordImageCallPromise = new Promise((resolve,reject)=>{
+      if(typeof firebase.functions === "function"){
+        try{resolve(firebase.functions(oldFirebaseApp,"europe-west1").httpsCallable("resolveJdnextDiscordImage"));return;}
+        catch(error){reject(error);return;}
+      }
+      const script=document.createElement("script");
+      script.src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js";
+      script.async=true;
+      script.onload=()=>{
+        try{resolve(firebase.functions(oldFirebaseApp,"europe-west1").httpsCallable("resolveJdnextDiscordImage"));}
+        catch(error){reject(error);}
+      };
+      script.onerror=()=>reject(new Error("Firebase Functions konnte nicht geladen werden."));
+      document.head.appendChild(script);
+    });
+  }
+  const callable=await resolveDiscordImageCallPromise;
+  return callable(payload);
+}
 
 const tobiApp = firebase.apps.find(app=>app.options.projectId===TOBI_FIREBASE_CONFIG.projectId)
   || firebase.initializeApp(TOBI_FIREBASE_CONFIG);
 const tobiAuth = firebase.auth(tobiApp);
 const tobiDb = firebase.firestore(tobiApp);
+// Account Core owns persistence. Do not run a second persistence mutation through
+// Compat at the same time: two SDK instances can briefly report different sessions.
+const tobiAuthPersistenceReady=Promise.resolve();
 
 let activeTobiUser = null;
 let activeTobiProfile = null;
@@ -352,11 +396,13 @@ const THEME_CATALOG = [
   {id:"Gold",name:"Gold",price:100,description:"Gold, Bernstein und Champagner · goldener Glitzer-Trail",trail:["✦","✧","★"],bgA:"#201706",bgB:"#593b0d",bgC:"#8c6819",pink:"#ffd36b",cyan:"#fff0a6",gold:"#fff0a6",violet:"#dba64b"}
 ];
 
-// Event-only themes are intentionally excluded from the public catalog.
-// They become visible only when an admin has granted their ID to the account.
+// Versteckte Themes werden nur angezeigt, wenn sie im Profil freigeschaltet sind
+// oder durch einen aktuellen Admin-Tag abgeleitet werden.
 const EVENT_THEMES = [
   {id:"WinterEvent",name:"Winterwunder",price:0,description:"Festliches Mitternachtsblau, Eislicht und winterlicher Sternen-Trail",trail:["❄","✦","🎄"],bgA:"#07172c",bgB:"#12345c",bgC:"#7cbbd9",pink:"#bceaff",cyan:"#e6fbff",gold:"#ffe7a3",violet:"#8dbcf5",eventOnly:true},
-  {id:"BirthdayEvent",name:"Birthday Bash",price:0,description:"Festlicher Roségold-Glow mit Konfetti- und Ballon-Trail",trail:["🎈","✦","🎉"],bgA:"#2a1230",bgB:"#71385e",bgC:"#d98b9d",pink:"#ff91c8",cyan:"#9df7ed",gold:"#ffe1a0",violet:"#c68bff",eventOnly:true}
+  {id:"BirthdayEvent",name:"Birthday Bash",price:0,description:"Festlicher Roségold-Glow mit Konfetti- und Ballon-Trail",trail:["🎈","✦","🎉"],bgA:"#2a1230",bgB:"#71385e",bgC:"#d98b9d",pink:"#ff91c8",cyan:"#9df7ed",gold:"#ffe1a0",violet:"#c68bff",eventOnly:true},
+  {id:"AdminMatrix",name:"Admin Matrix",price:0,description:"Exklusiv für den admin-Tag · animierter grüner Matrix-Code mit Neon-Glow",trail:["0","1","⌁","∑"],bgA:"#010604",bgB:"#03150a",bgC:"#06421c",pink:"#48ff83",cyan:"#b8ffca",gold:"#e4ffe9",violet:"#12b84e",eventOnly:true,adminOnly:true},
+  {id:"HalloweenEvent",name:"Halloween Afterdark",price:0,description:"Kürbis-Orange, Geisterviolett und ein Fledermaus-Trail · Freischaltung am 31. Oktober",trail:["🦇","🎃","✦"],bgA:"#15091e",bgB:"#381343",bgC:"#7b2a20",pink:"#ff823d",cyan:"#d6a0ff",gold:"#ffc16b",violet:"#9849c4",eventOnly:true,halloweenOnly:true}
 ];
 
 /* =====================================================================
@@ -475,7 +521,8 @@ function getHomeworkEntries(hwKey){
 
 function isTobiAdmin(profile=activeTobiProfile){
   return Boolean(activeTobiUser && profile && profile.disabled!==true
-    && Array.isArray(profile.tags) && profile.tags.includes("admin"));
+    && Array.isArray(profile.tags)
+    && profile.tags.some(tag=>String(tag).trim().toLowerCase()==="admin"));
 }
 function hasActiveMaintenanceBypass(){
   return isTobiAdmin() && activeTobiProfile?.maintenanceBypass===true;
@@ -575,9 +622,10 @@ async function ensureAnonymousAuth(){
   if(oldAuth.currentUser) return oldAuth.currentUser;
   try{
     return (await oldAuth.signInAnonymously()).user;
-  }catch(e){
-    console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",e);
-    return null;
+  }catch(error){
+    console.error("Anonyme UNTIS-Anmeldung fehlgeschlagen:",error);
+    // Preserve Firebase's error code so classwork can show the actual fix.
+    throw error;
   }
 }
 
@@ -596,15 +644,17 @@ function explainFirebaseError(error, action="Dieser Vorgang"){
     return "Firebase ist momentan nicht erreichbar. Prüfe deine Internetverbindung und versuche es erneut.";
   }
   if(code==="permission-denied" || /missing or insufficient permissions/i.test(message)){
-    return "Firebase hat den Vorgang abgelehnt. Öffne im Projekt „tobiservices“ Firestore Database → Rules und veröffentliche die aktuelle firestore.rules aus dem TobiServices-Account-Repository.";
+    return "TobiServices-Firestore hat den Schreibvorgang abgelehnt. Hausaufgaben werden im Projekt „tobiservices“ gespeichert. Veröffentliche dort die firestore.rules aus dem Repository „Tobiservices-Account“ (nicht die Regeln aus „JDNEXT_UNTIS“, die gehören zu next-untis-plus). Dafür gibt es deploy_tobiservices_rules.bat im TobiServices-Account-Repository.";
   }
   if(code==="auth/too-many-requests"){
     return "Firebase hat zu viele Anmeldeversuche erkannt. Bitte versuche es später erneut.";
   }
+  if(!code && message) return message;
   const detail=code ? " ("+code+")" : "";
   return action+" ist fehlgeschlagen"+detail+". Prüfe die Firebase-Einstellungen und die Internetverbindung.";
 }
 async function ensureTobiAuthForJdnext(){
+  await tobiAuthPersistenceReady;
   await tobiAuthReady;
   if(tobiAuth.currentUser) return tobiAuth.currentUser;
   try{
@@ -666,12 +716,12 @@ async function loadClasswork(){
           });
         });
         classworkData[key]=entries;
-        renderTimetable();
+        scheduleTimetableRender();
       },
       err=>{
         console.warn("Classwork read failed:",key,err);
         classworkData[key]=[];
-        renderTimetable();
+        scheduleTimetableRender();
       }
     );
     classworkUnsubscribes.push(unsub);
@@ -792,14 +842,14 @@ async function loadHomework(){
             });
           });
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         },
         err=>{
           console.error("TobiServices homework read failed:",hwKey,err);
           sharedHomeworkData[hwKey]=[];
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         }
       );
@@ -823,14 +873,14 @@ async function loadHomework(){
             });
           });
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         },
         err=>{
           console.warn("Older JDNEXT homework read failed:",hwKey,err);
           olderSharedHomeworkData[hwKey]=[];
           rebuildHomeworkData();
-          renderTimetable();
+          scheduleTimetableRender();
           done();
         }
       );
@@ -869,7 +919,7 @@ async function loadLegacyHomework(){
       });
       legacyHomeworkData=nextLegacy;
       rebuildHomeworkData();
-      renderTimetable();
+      scheduleTimetableRender();
     },
     err=>console.warn("Legacy homework read failed:",err)
   );
@@ -878,86 +928,28 @@ async function loadLegacyHomework(){
 async function saveHomeworkEntry(hwKey,entry,images=[]){
   setSync("Speichert…");
   try{
-    const user=await ensureTobiAuthForJdnext();
-    if(!user) throw new Error("Untis Next konnte keine Firebase-Anmeldung herstellen.");
-    let profile=null;
-    if(!user.isAnonymous) profile=await ensureTobiProfile(user);
-
-    const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(entry.id);
-    const ownerRef=tobiDb.collection("jdnextHomeworkPrivate").doc(hwKey).collection("entries").doc(entry.id);
+    // The Account Core module owns TobiServices Auth and Firestore writes.
+    // Waiting for its session event prevents a stale Compat anonymous user from
+    // replacing or masking the signed-in TobiServices account.
+    await Promise.race([
+      accountCoreReady,
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TobiServices wird noch geladen. Bitte kurz warten und erneut speichern.")),7000))
+    ]);
+    if(typeof accountCoreSaveHomeworkEntry!=="function"){
+      throw new Error("Das TobiServices-Account-Modul konnte nicht geladen werden. Lade Untis Next neu (Strg+F5).");
+    }
+    const result=await accountCoreSaveHomeworkEntry({
+      hwKey,
+      entryId:entry.id,
+      text:entry.text,
+      author:entry.author,
+      images
+    });
     const imageMetadata=(Array.isArray(images)?images.slice(0,3):[]).map(image=>({
       kind:"firestore",
       imageId:String(image.imageId),
       filename:String(image.filename||"bild.jpg").slice(0,120)
     }));
-    const eventId="reward-"+hwKey+"-"+entry.id;
-    const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
-    const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
-    let rewardApplied=false;
-
-    await tobiDb.runTransaction(async transaction=>{
-      const entrySnap=await transaction.get(entryRef);
-      // Private metadata and coin-event documents intentionally cannot be read by clients.
-      // Their create-only rules reject ID reuse without exposing those documents.
-      if(entrySnap.exists) throw new Error("Dieser Hausaufgabeneintrag existiert bereits.");
-
-      let authorTobiUid=null;
-      // Private record of the TobiServices account used for this post, separate from reward eligibility.
-      const authorTobiAccountUid=user.isAnonymous ? null : user.uid;
-      let profileRef=null;
-      let profileSnap=null;
-      if(!user.isAnonymous && profile?.disabled!==true &&
-         (Number.isSafeInteger(profile?.goldCoins)?profile.goldCoins:0)>-50){
-        profileRef=tobiDb.collection("users").doc(user.uid);
-        profileSnap=await transaction.get(profileRef);
-        if(profileSnap.exists &&
-           profileSnap.data()?.disabled!==true &&
-           (Number.isSafeInteger(profileSnap.data()?.goldCoins)?profileSnap.data().goldCoins:0)>-50){
-          authorTobiUid=user.uid;
-        }
-      }
-
-      if(authorTobiUid){
-        const before=Number.isSafeInteger(profileSnap.data()?.goldCoins)?profileSnap.data().goldCoins:0;
-        const after=before+10;
-        if(!Number.isSafeInteger(after)) throw new Error("Der Münzstand ist außerhalb des erlaubten Zahlenbereichs.");
-        transaction.update(profileRef,{
-          goldCoins:after,
-          lastProfileChangeAt:stamp(),
-          lastJdnextCoinEventId:eventId
-        });
-        transaction.set(eventRef,{
-          uid:user.uid, amount:10, type:"homework-post", hwKey, entryId:entry.id,
-          createdAt:stamp()
-        });
-        rewardApplied=true;
-      }
-
-      transaction.set(entryRef,{
-        text:entry.text,
-        author:entry.author,
-        images:imageMetadata,
-        reportCount:0,
-        createdAt:stamp()
-      });
-      transaction.set(ownerRef,{
-        authorAuthUid:user.uid,
-        authorTobiUid:authorTobiUid,
-        authorTobiAccountUid:authorTobiAccountUid,
-        createdAt:stamp()
-      });
-      (Array.isArray(images)?images.slice(0,3):[]).forEach(image=>{
-        if(typeof image.dataUrl!=="string" || image.dataUrl.length>800000){
-          throw new Error("Ein Bild überschreitet die erlaubte Uploadgröße.");
-        }
-        transaction.set(entryRef.collection("images").doc(String(image.imageId)),{
-          filename:String(image.filename||"bild.jpg").slice(0,120),
-          dataUrl:image.dataUrl,
-          createdAt:stamp()
-        });
-      });
-    });
-
     if(!sharedHomeworkData[hwKey]) sharedHomeworkData[hwKey]=[];
     sharedHomeworkData[hwKey].push({
       ...entry,
@@ -968,13 +960,13 @@ async function saveHomeworkEntry(hwKey,entry,images=[]){
       legacy:false
     });
     rebuildHomeworkData();
-    setSync(rewardApplied
+    setSync(result.rewardQueued
       ? "● Gespeichert · +10 Goldmünzen gutgeschrieben"
       : "● Gespeichert · live für alle sichtbar");
-    return {ok:true,rewardQueued:rewardApplied};
-  }catch(e){
-    const friendly=explainFirebaseError(e,"Das Speichern der Hausaufgabe");
-    console.error("Hausaufgabe konnte nicht gespeichert werden:",e);
+    return {ok:true,rewardQueued:Boolean(result.rewardQueued)};
+  }catch(error){
+    const friendly=explainFirebaseError(error,"Das Speichern der Hausaufgabe");
+    console.error("Hausaufgabe konnte nicht gespeichert werden:",error);
     setSync(friendly);
     throw new Error(friendly);
   }
@@ -1143,10 +1135,26 @@ function openModal(date,pIdx,subject){
         await saveClassworkEntry(hwKey,title);
         input.value="";
         showToast("✅ Klassenarbeit eingetragen");
+        // Update the open modal immediately; the Firestore listener only redraws the grid.
+        const classList=modal.querySelector(".classwork-list");
+        if(classList){
+          const empty=classList.querySelector(".image-status");
+          if(empty) empty.remove();
+          const row=el("div","classwork-item");
+          row.textContent=title;
+          classList.appendChild(row);
+        }
         renderTimetable();
       }catch(error){
-        console.error(error);
-        showToast(error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
+        console.error("Klassenarbeit konnte nicht gespeichert werden:",error);
+        const message=error?.code==="permission-denied"
+          ? "Firebase hat das Speichern abgelehnt. Prüfe die Firestore-Regeln des Projekts next-untis-plus."
+          : error?.code==="auth/operation-not-allowed"
+            ? "Die anonyme Anmeldung ist in next-untis-plus deaktiviert. Aktiviere sie unter Firebase Authentication → Sign-in method → Anonymous."
+            : error?.code==="auth/unauthorized-domain"
+              ? "Firebase blockiert diese Website-Domain. Ergänze hannonuppi.github.io unter Authentication → Settings → Authorized domains."
+              : (error?.message||"Klassenarbeit konnte nicht gespeichert werden.");
+        showToast(message);
       }finally{
         classworkSave.disabled=false;
         classworkSave.textContent="KA+";
@@ -1356,54 +1364,36 @@ async function removeReportedHomework(hwKey,id){
 
 async function reportEntry(hwKey,id,redraw){
   if(wasReported(id)) return;
-  let user;
-  try{ user=await ensureTobiAuthForJdnext(); }
-  catch(error){ showToast(error?.message||"Untis Next konnte Firebase nicht erreichen."); return; }
-  if(!user){
-    showToast("⚠️ Meldungen sind momentan nicht verfügbar");
-    return;
-  }
-  const entry=getHomeworkEntries(hwKey).find(e=>e.id===id);
-  if(!entry || entry.legacy) return;
-  const entryRef=tobiDb.collection("jdnextHomework").doc(hwKey).collection("entries").doc(id);
-  const reportRef=entryRef.collection("reports").doc(user.uid);
   try{
-    const nextCount=await tobiDb.runTransaction(async transaction=>{
-      const entrySnap=await transaction.get(entryRef);
-      const reportSnap=await transaction.get(reportRef);
-      if(!entrySnap.exists) throw new Error("Der Eintrag wurde bereits entfernt.");
-      if(reportSnap.exists) throw new Error("already-reported");
-      const current=Number.isSafeInteger(entrySnap.data()?.reportCount)?entrySnap.data().reportCount:0;
-      transaction.set(reportRef,{createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-      transaction.update(entryRef,{reportCount:current+1});
-      return current+1;
-    });
+    await Promise.race([
+      accountCoreReady,
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TobiServices wird noch geladen. Bitte erneut versuchen.")),7000))
+    ]);
+    if(typeof accountCoreReportHomeworkEntry!=="function"){
+      throw new Error("Das gemeinsame TobiServices-Account-Modul konnte nicht geladen werden. Lade die Seite neu.");
+    }
+    const result=await accountCoreReportHomeworkEntry(hwKey,id);
     markReported(id);
-    if(nextCount>=2){
-      try{
-        const removed=await removeReportedHomework(hwKey,id);
-        showToast(removed?"🚩 Zwei Meldungen: Eintrag entfernt":"🚩 Meldung gespeichert");
-      }catch(removalError){
-        console.error("Moderation failed:",removalError);
-        showToast("🚩 Meldung gespeichert; Entfernung konnte nicht abgeschlossen werden");
-      }
+    if(result.nextCount>=2){
+      if(result.removed) showToast("🚩 Zwei Meldungen: Eintrag entfernt");
+      else if(result.removalPending) showToast("🚩 Meldung gespeichert; Entfernung wird erneut geprüft");
+      else showToast("🚩 Meldung gespeichert");
     }else{
       showToast("🚩 Meldung gespeichert");
     }
     redraw();
-  }catch(e){
-    const msg=String(e&&e.message||"").toLowerCase();
-    if(msg.includes("already-reported") || e?.code==="already-exists" || e?.code===6){
+  }catch(error){
+    const msg=String(error?.message||"").toLowerCase();
+    if(msg.includes("already-reported") || error?.code==="already-exists" || error?.code===6){
       markReported(id);
       showToast("🚩 Diesen Eintrag hast du bereits gemeldet");
       redraw();
       return;
     }
-    console.error("Firestore-Meldung fehlgeschlagen:",e);
-    showToast("⚠️ Meldung konnte nicht gespeichert werden");
+    console.error("Firestore-Meldung fehlgeschlagen:",error);
+    showToast(explainFirebaseError(error,"Die Meldung der Hausaufgabe"));
   }
 }
-
 function closeModal(){ document.getElementById("overlay").classList.remove("show"); }
 document.getElementById("overlay").addEventListener("click",(e)=>{ if(e.target.id==="overlay") closeModal(); });
 
@@ -1416,8 +1406,13 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> t.classList.remove("show"), 2600);
 }
-document.getElementById("loginBtn").onclick=()=>{
-  location.href=activeTobiUser ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
+document.getElementById("leaderboardBtn").onclick=openLeaderboard;
+document.getElementById("loginBtn").onclick=async()=>{
+  try{await Promise.race([accountCoreReady,new Promise(resolve=>setTimeout(resolve,2500))]);}catch{}
+  // A valid Firebase login counts as signed in even while the profile is still loading.
+  // Do not send a signed-in user back to the login form just because Firestore is slow.
+  const signedIn=Boolean(activeTobiUser);
+  location.href=signedIn ? ACCOUNT_CENTER_URL : ACCOUNT_URL;
 };
 
 document.getElementById("maintenanceBypassBtn").onclick=async()=>{
@@ -1426,21 +1421,26 @@ document.getElementById("maintenanceBypassBtn").onclick=async()=>{
     showToast("Nur ein angemeldeter Admin kann den Wartungsbypass verwenden.");
     return;
   }
+  if(typeof accountCoreSetMaintenanceBypass!=="function"){
+    showToast("TobiServices wird noch geladen. Bitte erneut versuchen.");
+    return;
+  }
   const enabled=activeTobiProfile?.maintenanceBypass!==true;
   button.disabled=true;
   try{
-    await tobiDb.collection("users").doc(activeTobiUser.uid).update({
-      maintenanceBypass:enabled,
-      lastProfileChangeAt:firebase.firestore.FieldValue.serverTimestamp()
-    });
-    activeTobiProfile={...activeTobiProfile,maintenanceBypass:enabled};
+    const updated=await accountCoreSetMaintenanceBypass(enabled);
+    if(activeTobiUser?.uid!==updated.uid && updated.uid){
+      throw new Error("Die Sitzung hat während des Speicherns gewechselt.");
+    }
+    activeTobiProfile={...activeTobiProfile,...updated,maintenanceBypass:enabled};
+    updateTobiLoginButton();
     refreshMaintenanceAccess();
     showToast(enabled
       ? "🛠️ Wartungsbypass aktiviert."
       : "🛠️ Wartungsbypass deaktiviert.");
   }catch(error){
     console.error("Maintenance bypass update failed:",error);
-    showToast("Bypass konnte nicht gespeichert werden. Prüfe die TobiServices-Firestore-Regeln.");
+    showToast(explainFirebaseError(error,"Der Wartungsbypass"));
   }finally{
     renderMaintenanceBypassButton();
   }
@@ -1448,51 +1448,274 @@ document.getElementById("maintenanceBypassBtn").onclick=async()=>{
 
 
 function updateTobiLoginButton(){
+  const leaderboardButton=document.getElementById("leaderboardBtn");
+  if(leaderboardButton){
+    const canViewLeaderboard=isTobiAdmin();
+    leaderboardButton.hidden=!canViewLeaderboard;
+    leaderboardButton.style.display=canViewLeaderboard?"":"none";
+  }
   const button=document.getElementById("loginBtn");
   if(!button) return;
   if(activeTobiUser && activeTobiProfile?.disabled===true){
     button.textContent="⛔ Konto gesperrt";
     button.title="Dein Konto ist für TobiServices-Dienste gesperrt. Hilfe im Account Center.";
+  }else if(activeTobiUser && !activeTobiProfile){
+    button.textContent=accountCoreProfileError ? "Account-Fehler" : "Account wird geladen…";
+    button.title=accountCoreProfileError
+      ? "Anmeldung erkannt, aber das TobiServices-Profil konnte nicht geladen werden: "+accountCoreProfileError
+      : "Anmeldung erkannt; TobiServices-Profil wird geladen.";
   }else if(activeTobiUser){
     const name=activeTobiProfile?.displayName||activeTobiUser.displayName||activeTobiUser.email||"Angemeldet";
     const coins=Number.isSafeInteger(activeTobiProfile?.goldCoins)?activeTobiProfile.goldCoins:0;
-    button.textContent=`✦ ${coins.toLocaleString("de-DE")} Gold`;
-    button.title=`${name} · TobiServices Account öffnen`;
+    const icon=typeof activeTobiProfile?.profileIcon==="string"?activeTobiProfile.profileIcon:"";
+    const title=activeTobiProfile?.profileTitle||"";
+    button.textContent=`${icon}${icon?" ":""}✦ ${coins.toLocaleString("de-DE")} Gold`;
+    button.title=`${name}${title?" · "+title:""} · TobiServices Account öffnen`;
   }else{
     button.textContent="TobiServices Account";
     button.title="Anmelden oder dein gemeinsames Goldguthaben ansehen";
   }
 }
 
-tobiAuth.onAuthStateChanged(async user=>{
+let accountCoreReported=false;
+let accountCoreProfileError=null;
+let accountCoreSetEquippedTheme=null;
+let accountCoreRefreshProfile=null;
+let accountCoreSaveHomeworkEntry=null;
+let accountCoreReportHomeworkEntry=null;
+let accountCorePurchaseTheme=null;
+let accountCoreSetMaintenanceBypass=null;
+let accountCoreCheckHalloweenUnlock=null;
+let accountCoreGetLeaderboard=null;
+let accountCoreSyncPublicProfile=null;
+let resolveAccountCoreReady;
+const accountCoreReady=new Promise(resolve=>{resolveAccountCoreReady=resolve;});
+let accountCoreUid=null;
+let tobiProfileWatchedUid=null;
+
+function stopTobiProfileWatch(){
+  if(tobiProfileUnsubscribe){try{tobiProfileUnsubscribe();}catch{}}
+  tobiProfileUnsubscribe=null;
+  tobiProfileWatchedUid=null;
+}
+function handleTobiProfileSnapshot(snapshot){
+  // The modular Account Core supplies the session's profile. Do not overwrite it
+  // with an older cached Compat snapshot; that can hide a just-granted event theme.
+  if(snapshot.metadata?.fromCache && activeTobiProfile) return;
+  if(snapshot.exists){
+    activeTobiProfile={uid:snapshot.id,...(snapshot.data()||{})};
+    accountCoreProfileError=null;
+  }else if(!snapshot.metadata?.fromCache){
+    activeTobiProfile=null;
+    accountCoreProfileError="Für dieses Konto ist kein TobiServices-Profil vorhanden.";
+  }
+  if(activeTobiProfile && activeTobiUser && activeTobiProfile.disabled!==true && accountCoreSyncPublicProfile){
+    void accountCoreSyncPublicProfile(activeTobiProfile).catch(error=>
+      console.warn("Ranglisten-Eintrag konnte nicht synchronisiert werden:",error)
+    );
+  }
+  if(activeTobiProfile?.disabled===true){
+    showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
+  }
+  updateTobiLoginButton();
+  applyTheme(currentEquippedTheme());
+  renderMaintenanceBypassButton();
+  refreshMaintenanceAccess();
+  if(activeTobiProfile && activeTobiUser && activeTobiProfile.disabled!==true){
+    void maybeUnlockHalloweenTheme(activeTobiUser.uid);
+  }
+  if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
+}
+function watchTobiProfile(uid){
+  const compatUser=tobiAuth.currentUser;
+  // Never start a Firestore listener under a different or anonymous Compat
+  // session. If Auth finishes restoring later, the Auth observer will retry.
+  if(!uid || !compatUser || compatUser.isAnonymous || compatUser.uid!==uid){
+    if(tobiProfileWatchedUid===uid) stopTobiProfileWatch();
+    return;
+  }
+  if(tobiProfileWatchedUid===uid) return;
+  stopTobiProfileWatch();
+  tobiProfileWatchedUid=uid;
+  tobiProfileUnsubscribe=tobiDb.collection("users").doc(uid).onSnapshot(
+    {includeMetadataChanges:true},
+    snapshot=>{
+      // Ignore delayed callbacks from a profile listener belonging to a previous login.
+      if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+      if(accountCoreReported && accountCoreUid!==uid) return;
+      // Do not let an old local cache replace the profile the Account Center just loaded.
+      // Metadata changes are enabled so the authoritative server snapshot will still arrive.
+      if(snapshot.metadata?.fromCache && activeTobiProfile) return;
+      handleTobiProfileSnapshot(snapshot);
+    },
+    error=>{
+      if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+      if(accountCoreReported && accountCoreUid!==uid) return;
+      console.warn("TobiServices-Profil konnte in Untis Next nicht live synchronisiert werden:",error);
+      // Behalte das bereits vom gemeinsamen Account-Core geladene Profil vorerst bei.
+      updateTobiLoginButton();
+      renderMaintenanceBypassButton();
+      refreshMaintenanceAccess();
+    }
+  );
+}
+
+tobiAuth.onAuthStateChanged(user=>{
+  if(!tobiAuthInitialized){
+    tobiAuthInitialized=true;
+    resolveTobiAuthReady(user);
+  }
+  if(accountCoreReported){
+    // The modular Account Core is the source of truth. Compat only mirrors the
+    // same UID for read listeners; a different/stale account must never replace it.
+    if(accountCoreUid && user && !user.isAnonymous && user.uid===accountCoreUid){
+      watchTobiProfile(accountCoreUid);
+    }else{
+      stopTobiProfileWatch();
+    }
+    return;
+  }
+  // Temporary fallback before the modular Account Core has emitted its session.
   activeTobiUser=user&&!user.isAnonymous?user:null;
-  activeTobiProfile=null;
-  if(tobiProfileUnsubscribe){try{tobiProfileUnsubscribe();}catch{} tobiProfileUnsubscribe=null;}
+  if(!activeTobiUser) activeTobiProfile=null;
   if(!tobiAuthInitialized){
     tobiAuthInitialized=true;
     resolveTobiAuthReady(user);
   }
   updateTobiLoginButton();
-  applyTheme(activeTobiUser ? "Next" : (localStorage.getItem("jdnextTheme")||"Next"));
+  if(activeTobiUser) watchTobiProfile(activeTobiUser.uid);
+  else{
+    stopTobiProfileWatch();
+    applyTheme(localStorage.getItem("jdnextTheme")||"Next");
+  }
   renderMaintenanceBypassButton();
   refreshMaintenanceAccess();
-  if(!user||user.isAnonymous) return;
+});
 
-  tobiProfileUnsubscribe=tobiDb.collection("users").doc(user.uid).onSnapshot(snapshot=>{
-    activeTobiProfile=snapshot.exists?(snapshot.data()||{}):null;
-    if(activeTobiProfile?.disabled===true){
-      showToast("⚠️ Dein TobiServices-Konto ist gesperrt. Münzboni sind deaktiviert.");
-    }
+window.addEventListener("tobiservices-account-session",event=>{
+  resolveAccountCoreReady();
+  const detail=event.detail||{};
+  const user=detail.user||null;
+  const profile=detail.profile||null;
+  accountCoreSetEquippedTheme=typeof detail.setEquippedTheme==="function"
+    ? detail.setEquippedTheme
+    : null;
+  accountCoreRefreshProfile=typeof detail.refreshProfileFromServer==="function"
+    ? detail.refreshProfileFromServer
+    : null;
+  accountCoreSaveHomeworkEntry=typeof detail.saveJdnextHomeworkEntry==="function"
+    ? detail.saveJdnextHomeworkEntry
+    : null;
+  accountCoreReportHomeworkEntry=typeof detail.reportJdnextHomeworkEntry==="function"
+    ? detail.reportJdnextHomeworkEntry
+    : null;
+  accountCorePurchaseTheme=typeof detail.purchaseJdnextTheme==="function"
+    ? detail.purchaseJdnextTheme
+    : null;
+  accountCoreSetMaintenanceBypass=typeof detail.setMaintenanceBypass==="function"
+    ? detail.setMaintenanceBypass
+    : null;
+  accountCoreCheckHalloweenUnlock=typeof detail.checkHalloweenThemeUnlock==="function"
+    ? detail.checkHalloweenThemeUnlock
+    : null;
+  accountCoreGetLeaderboard=typeof detail.getLeaderboard==="function"
+    ? detail.getLeaderboard
+    : null;
+  accountCoreSyncPublicProfile=typeof detail.syncPublicProfile==="function"
+    ? detail.syncPublicProfile
+    : null;
+  // The modular Account Core owns the active account session. A separate Compat
+  // identity (especially a leftover anonymous session) must never mask sign-in state.
+  accountCoreReported=true;
+  if(user?.uid && !user.isAnonymous){
+    const previousUid=activeTobiUser?.uid;
+    accountCoreProfileError=profile ? null : String(detail.profileError?.message||detail.profileError?.code||"Profil wird erneut geladen.");
+    accountCoreUid=user.uid;
+    activeTobiUser={uid:user.uid,email:user.email||"",displayName:user.displayName||"",isAnonymous:false};
+    // Avoid clearing a profile for the same account if its first Firestore read
+    // failed; a fresh server read below repairs the partial session.
+    activeTobiProfile=profile || (previousUid===user.uid ? activeTobiProfile : null);
     updateTobiLoginButton();
-    applyTheme(activeTobiProfile?.equippedTheme || "Next");
+    applyTheme(currentEquippedTheme());
     renderMaintenanceBypassButton();
     refreshMaintenanceAccess();
-  },error=>{
-    console.warn("TobiServices-Guthaben konnte nicht geladen werden:",error);
+    watchTobiProfile(user.uid);
+    if(activeTobiProfile && activeTobiProfile.disabled!==true){
+      void maybeUnlockHalloweenTheme(user.uid);
+      if(accountCoreSyncPublicProfile) void accountCoreSyncPublicProfile(activeTobiProfile).catch(error=>
+        console.warn("Ranglisten-Eintrag konnte nicht synchronisiert werden:",error)
+      );
+    }
+    if(!profile) void retryAccountProfileLoad(user.uid);
+  }else{
+    accountCoreUid=null;
+    accountCoreProfileError=null;
+    activeTobiUser=null;
     activeTobiProfile=null;
+    stopTobiProfileWatch();
+    updateTobiLoginButton();
+    applyTheme(localStorage.getItem("jdnextTheme")||"Next");
     renderMaintenanceBypassButton();
     refreshMaintenanceAccess();
+  }
+});
+
+function localDateIsHalloween(){
+  // Event dates follow Germany's calendar even if the device timezone differs.
+  const parts=new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Berlin",month:"numeric",day:"numeric"
+  }).formatToParts(new Date());
+  const month=Number(parts.find(part=>part.type==="month")?.value);
+  const day=Number(parts.find(part=>part.type==="day")?.value);
+  return month===10 && day===31;
+}
+const halloweenUnlockInFlight = new Set();
+async function maybeUnlockHalloweenTheme(uid){
+  if(!uid || !activeTobiUser || activeTobiUser.uid!==uid ||
+     typeof accountCoreCheckHalloweenUnlock!=="function") return;
+  try{
+    const profile=await accountCoreCheckHalloweenUnlock();
+    if(activeTobiUser?.uid!==uid || !profile || profile.uid!==uid) return;
+    activeTobiProfile=profile;
+    updateTobiLoginButton();
+    applyTheme(currentEquippedTheme());
+    renderMaintenanceBypassButton();
+    refreshMaintenanceAccess();
+    if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
+  }catch(error){
+    console.warn("Halloween-Theme konnte nicht aktualisiert werden:",error);
+  }
+}
+function berlinDateTimeToTimestamp(year,monthIndex,day,hour=0,minute=0,second=0){
+  const target=Date.UTC(year,monthIndex,day,hour,minute,second);
+  let guess=target;
+  const formatter=new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit",
+    hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"
   });
+  for(let i=0;i<3;i++){
+    const parts=Object.fromEntries(formatter.formatToParts(new Date(guess))
+      .filter(part=>part.type!=="literal").map(part=>[part.type,Number(part.value)]));
+    const observed=Date.UTC(parts.year,parts.month-1,parts.day,parts.hour,parts.minute,parts.second);
+    guess+=target-observed;
+  }
+  return guess;
+}
+function scheduleHalloweenUnlockCheck(){
+  const berlinParts=Object.fromEntries(new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Berlin",year:"numeric",month:"numeric",day:"numeric"
+  }).formatToParts(new Date()).filter(part=>part.type!=="literal")
+    .map(part=>[part.type,Number(part.value)]));
+  let next=berlinDateTimeToTimestamp(berlinParts.year,9,31,0,0,5);
+  if(Date.now()>=next) next=berlinDateTimeToTimestamp(berlinParts.year+1,9,31,0,0,5);
+  setTimeout(()=>{
+    if(activeTobiUser) void maybeUnlockHalloweenTheme(activeTobiUser.uid);
+    scheduleHalloweenUnlockCheck();
+  },Math.max(1000,next-Date.now()));
+}
+scheduleHalloweenUnlockCheck();
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden && activeTobiUser) void maybeUnlockHalloweenTheme(activeTobiUser.uid);
 });
 
 function findTheme(themeId){
@@ -1530,14 +1753,120 @@ function applyTheme(themeId){
   if(window.UntisNextAndroid && typeof window.UntisNextAndroid.setThemeIcon==="function"){
     try{window.UntisNextAndroid.setThemeIcon(theme.id);}catch(error){console.warn("Launcher-Icon konnte nicht gewechselt werden:",error);}
   }
+  setMatrixRainActive(theme.id==="AdminMatrix");
 }
+const matrixCanvas=document.getElementById("matrixRain");
+const matrixContext=matrixCanvas?.getContext("2d",{alpha:true});
+let matrixFrame=0;
+let matrixLastDraw=0;
+let matrixColumns=[];
+let matrixCellSize=18;
+let matrixCanvasReady=false;
+function resizeMatrixCanvas(){
+  if(!matrixCanvas||!matrixContext) return;
+  const ratio=Math.min(window.devicePixelRatio||1,2);
+  const width=Math.max(1,Math.floor(window.innerWidth*ratio));
+  const height=Math.max(1,Math.floor(window.innerHeight*ratio));
+  if(matrixCanvas.width!==width) matrixCanvas.width=width;
+  if(matrixCanvas.height!==height) matrixCanvas.height=height;
+  matrixCanvas.style.width=window.innerWidth+"px";
+  matrixCanvas.style.height=window.innerHeight+"px";
+  matrixContext.setTransform(ratio,0,0,ratio,0,0);
+  matrixContext.clearRect(0,0,window.innerWidth,window.innerHeight);
+  matrixColumns=Array.from(
+    {length:Math.ceil(window.innerWidth/matrixCellSize)},
+    ()=>Math.floor(Math.random()*-35)
+  );
+  matrixCanvasReady=true;
+}
+function drawStaticMatrixRain(){
+  if(!matrixCanvas||!matrixContext||!matrixCanvasReady) return;
+  const ctx=matrixContext;
+  ctx.clearRect(0,0,window.innerWidth,window.innerHeight);
+  ctx.font="13px ui-monospace,Consolas,monospace";
+  const glyphs="01アカサタナハマヤラワЖΣЖ";
+  const rows=Math.ceil(window.innerHeight/matrixCellSize);
+  for(let column=0;column<matrixColumns.length;column++){
+    const x=column*matrixCellSize;
+    for(let row=0;row<rows;row+=2){
+      ctx.fillStyle=row%6===0?"rgba(217,255,228,0.78)":"rgba(53,255,117,0.26)";
+      ctx.fillText(glyphs[Math.floor(Math.random()*glyphs.length)],x,row*matrixCellSize);
+    }
+  }
+}
+function setMatrixRainActive(enabled){
+  if(!matrixCanvas||!matrixContext) return;
+  const reduceMotion=window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const active=Boolean(enabled);
+  matrixCanvas.hidden=!active;
+  if(active){
+    // A canvas defaults to 300×150; checking width===0 skips initialization.
+    if(!matrixCanvasReady || !matrixColumns.length) resizeMatrixCanvas();
+    if(reduceMotion){
+      if(matrixFrame){cancelAnimationFrame(matrixFrame);matrixFrame=0;}
+      drawStaticMatrixRain();
+      return;
+    }
+    if(!matrixFrame) matrixFrame=requestAnimationFrame(drawMatrixRain);
+  }else if(matrixFrame){
+    cancelAnimationFrame(matrixFrame);
+    matrixFrame=0;
+    matrixContext.clearRect(0,0,window.innerWidth,window.innerHeight);
+  }
+}
+function drawMatrixRain(time){
+  matrixFrame=0;
+  if(document.documentElement.dataset.jdnextTheme!=="adminmatrix" ||
+     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ||
+     document.hidden) return;
+  if(time-matrixLastDraw<45){
+    matrixFrame=requestAnimationFrame(drawMatrixRain);
+    return;
+  }
+  matrixLastDraw=time;
+  const ctx=matrixContext;
+  ctx.fillStyle="rgba(1,6,4,0.13)";
+  ctx.fillRect(0,0,window.innerWidth,window.innerHeight);
+  ctx.font="13px ui-monospace,Consolas,monospace";
+  const glyphs="01アカサタナハマヤラワЖΣЖ";
+  for(let column=0;column<matrixColumns.length;column++){
+    const x=column*matrixCellSize;
+    const y=matrixColumns[column]*matrixCellSize;
+    ctx.fillStyle=Math.random()>.91?"#d9ffe4":"#35ff75";
+    ctx.fillText(glyphs[Math.floor(Math.random()*glyphs.length)],x,y);
+    if(y>window.innerHeight && Math.random()>.975) matrixColumns[column]=Math.floor(Math.random()*-25);
+    else matrixColumns[column]++;
+  }
+  matrixFrame=requestAnimationFrame(drawMatrixRain);
+}
+window.addEventListener("resize",()=>{
+  if(!matrixCanvas?.hidden){
+    resizeMatrixCanvas();
+    if(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) drawStaticMatrixRain();
+  }
+},{passive:true});
+window.matchMedia?.("(prefers-reduced-motion: reduce)").addEventListener?.("change",()=>{
+  if(document.documentElement.dataset.jdnextTheme==="adminmatrix") setMatrixRainActive(true);
+});
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden && matrixFrame){cancelAnimationFrame(matrixFrame);matrixFrame=0;}
+  else if(!document.hidden && document.documentElement.dataset.jdnextTheme==="adminmatrix") setMatrixRainActive(true);
+});
 function getOwnedThemeIds(profile=activeTobiProfile){
-  const owned=Array.isArray(profile?.ownedThemes)?profile.ownedThemes:[];
+  const owned=Array.isArray(profile?.ownedThemes)?[...profile.ownedThemes]:[];
+  if(profile?.disabled!==true && Array.isArray(profile?.tags)
+     && profile.tags.some(tag=>String(tag).trim().toLowerCase()==="admin")){
+    owned.push("AdminMatrix");
+  }
   return new Set(["Next",...owned]);
 }
 function currentEquippedTheme(){
-  if(activeTobiUser) return findTheme(activeTobiProfile?.equippedTheme||"Next").id;
-  return findTheme(localStorage.getItem("jdnextTheme")||"Next").id;
+  const localTheme=localStorage.getItem("jdnextTheme")||"Next";
+  if(activeTobiUser){
+    if(isTobiAdmin(activeTobiProfile) && localTheme==="AdminMatrix") return findTheme("AdminMatrix").id;
+    return findTheme(activeTobiProfile?.equippedTheme||"Next").id;
+  }
+  return findTheme(localTheme).id;
 }
 
 // Premium cosmetics only: short pointer particles in each theme's palette.
@@ -1581,7 +1910,7 @@ function renderThemeMenu(){
     '<h2>🎨 Themes</h2>'+
     '<div class="msub">Kaufe besondere Looks für deine Stundenplan-App. Jedes Theme zeigt seinen Preis.</div>'+
     '<div class="theme-balance"><span>DEIN GUTHABEN</span><strong>✦ '+escapeHtml(status)+'</strong></div>'+
-    '<div class="theme-grid">'+[...THEME_CATALOG,...EVENT_THEMES.filter(theme=>owned.has(theme.id))].map(theme=>{
+    '<div class="theme-grid">'+[...THEME_CATALOG,...EVENT_THEMES.filter(theme=>owned.has(theme.id)||(theme.id==="AdminMatrix"&&isTobiAdmin()))].map(theme=>{
       const hasTheme=owned.has(theme.id);
       const isEquipped=equipped===theme.id;
       let action="login",label="Anmelden zum Kauf",disabled=false,buttonClass="";
@@ -1608,19 +1937,167 @@ function renderThemeMenu(){
     });
   });
 }
+async function refreshActiveTobiProfileFromServer(){
+  const user=activeTobiUser;
+  if(!user?.uid || user.isAnonymous) return activeTobiProfile;
+  let coreError=null;
+  if(accountCoreRefreshProfile){
+    try{
+      const fresh=await accountCoreRefreshProfile(user.uid);
+      if(activeTobiUser?.uid!==user.uid) return null;
+      if(fresh?.uid===user.uid){
+        activeTobiProfile=fresh;
+        updateTobiLoginButton();
+        renderMaintenanceBypassButton();
+        return fresh;
+      }
+      coreError=new Error("Account Core meldete kein passendes Profil.");
+    }catch(error){
+      coreError=error;
+      console.warn("Modulare Profilaktualisierung fehlgeschlagen; prüfe die gemeinsame Sitzung:",error);
+    }
+  }
+  // Compat fallback is allowed only for the exact same signed-in UID. Never
+  // overwrite the current session with a stale anonymous or different account.
+  const compatUser=tobiAuth.currentUser;
+  if(compatUser && !compatUser.isAnonymous && compatUser.uid===user.uid){
+    try{
+      const snap=await tobiDb.collection("users").doc(user.uid).get({source:"server"});
+      if(activeTobiUser?.uid!==user.uid) return null;
+      if(snap.exists){
+        activeTobiProfile={uid:user.uid,...(snap.data()||{})};
+        updateTobiLoginButton();
+        renderMaintenanceBypassButton();
+        return activeTobiProfile;
+      }
+    }catch(error){
+      console.warn("Compat-Profil-Fallback konnte nicht gelesen werden:",error);
+    }
+  }
+  // Keep the last known profile for display if the refresh is transiently unavailable.
+  if(activeTobiUser?.uid===user.uid && activeTobiProfile) return activeTobiProfile;
+  throw new Error("Dein TobiServices-Profil ist noch nicht synchronisiert. Bitte melde dich im Account Center erneut an."+(coreError?.code?" ("+coreError.code+")":""));
+}
 function openThemeMenu(){
   renderThemeMenu();
   document.getElementById("overlay").classList.add("show");
+  if(activeTobiUser){
+    void refreshActiveTobiProfileFromServer().then(()=>{
+      if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
+    }).catch(error=>console.warn("Theme-Besitz konnte nicht aktualisiert werden:",error));
+  }
 }
+
+async function retryAccountProfileLoad(uid){
+  const waits=[0,350,900,1700];
+  let lastError=null;
+  for(const delay of waits){
+    if(delay) await new Promise(resolve=>setTimeout(resolve,delay));
+    if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+    try{
+      const profile=await refreshActiveTobiProfileFromServer();
+      if(!profile || profile.uid!==uid) continue;
+      if(!activeTobiUser || activeTobiUser.uid!==uid) return;
+      activeTobiProfile=profile;
+      accountCoreProfileError=null;
+      updateTobiLoginButton();
+      applyTheme(currentEquippedTheme());
+      renderMaintenanceBypassButton();
+      refreshMaintenanceAccess();
+      if(accountCoreSyncPublicProfile && profile.disabled!==true){
+        void accountCoreSyncPublicProfile(profile).catch(error=>
+          console.warn("Ranglisten-Profil konnte nicht synchronisiert werden:",error)
+        );
+      }
+      if(document.getElementById("overlay")?.classList.contains("show")) renderThemeMenu();
+      return;
+    }catch(error){
+      lastError=error;
+      console.warn("Account-Profil wird erneut geladen:",error);
+    }
+  }
+  if(activeTobiUser?.uid===uid && !activeTobiProfile){
+    accountCoreProfileError=String(lastError?.message||"Profil konnte nach mehreren Versuchen nicht geladen werden.");
+    updateTobiLoginButton();
+    showToast("TobiServices-Anmeldung erkannt, aber das Profil konnte nicht geladen werden. Ursache: "+accountCoreProfileError);
+  }
+}
+async function openLeaderboard(){
+  if(!isTobiAdmin()){
+    showToast("Diese Rangliste ist nur für aktive Admins verfügbar.");
+    return;
+  }
+  const modal=document.getElementById("modal");
+  modal.innerHTML=
+    '<button class="closebtn" id="closeModal" aria-label="Fenster schließen">×</button>'+
+    '<h2>🏆 Gold-Rangliste</h2>'+
+    '<div class="msub">Die besten TobiServices-Accounts nach Goldmünzen. Titel und Icons sind rein kosmetisch.</div>'+
+    '<div class="theme-balance"><span>RANGLISTE</span><strong id="leaderboardStatus">Lade Rangliste…</strong></div>'+
+    '<div id="leaderboardRows" style="display:grid;gap:8px;margin-top:12px"></div>'+
+    '<p class="theme-login-note">Es erscheinen Accounts, deren öffentliches Ranglistenprofil bereits synchronisiert wurde. E-Mail-Adressen und Tags werden nicht angezeigt.</p>';
+  modal.querySelector("#closeModal").onclick=closeModal;
+  document.getElementById("overlay").classList.add("show");
+  const status=modal.querySelector("#leaderboardStatus");
+  const rows=modal.querySelector("#leaderboardRows");
+  try{
+    if(activeTobiUser && accountCoreSyncPublicProfile){
+      await accountCoreSyncPublicProfile(activeTobiProfile);
+    }
+    if(!accountCoreGetLeaderboard) throw new Error("Account-Modul noch nicht geladen. Bitte lade die Seite neu.");
+    const entries=await accountCoreGetLeaderboard(50);
+    if(!document.getElementById("leaderboardRows")) return;
+    status.textContent=entries.length ? entries.length+" Accounts" : "Noch keine Einträge";
+    if(!entries.length){
+      rows.innerHTML='<div class="theme-card"><strong>Noch ist es ruhig hier…</strong><small>Sobald Konten ihre Ranglistenprofile synchronisiert haben, erscheinen sie hier.</small></div>';
+      return;
+    }
+    rows.innerHTML=entries.map((entry,index)=>{
+      const icon=String(entry.profileIcon||"");
+      const name=String(entry.displayName||"Spieler").slice(0,32);
+      const title=String(entry.profileTitle||"").slice(0,32);
+      const coins=Number.isSafeInteger(entry.goldCoins)?entry.goldCoins:0;
+      const medal=index===0?"🥇":index===1?"🥈":index===2?"🥉":String(index+1);
+      return '<div class="theme-card" style="display:flex;align-items:center;gap:10px;padding:10px 12px">'+
+        '<strong style="width:28px;text-align:center;color:var(--gold)">'+medal+'</strong>'+
+        '<span style="font-size:25px;width:34px;text-align:center">'+escapeHtml(icon)+'</span>'+
+        '<div style="min-width:0;flex:1"><strong>'+escapeHtml(name)+'</strong>'+
+        (title?'<small style="display:block;color:var(--gold)">'+escapeHtml(title)+'</small>':'')+
+        '</div><strong style="white-space:nowrap">✦ '+coins.toLocaleString("de-DE")+'</strong></div>';
+    }).join("");
+  }catch(error){
+    console.error("Rangliste konnte nicht geladen werden:",error);
+    if(document.getElementById("leaderboardStatus")) status.textContent=error?.message||"Laden fehlgeschlagen.";
+    rows.innerHTML='<div class="theme-card"><strong>Rangliste gerade nicht verfügbar</strong><small>Bitte prüfe die Firestore-Regeln und lade die Seite neu.</small></div>';
+  }
+}
+
 async function equipTheme(theme){
   try{
+    if(activeTobiUser) await refreshActiveTobiProfileFromServer();
     if(activeTobiUser){
       if(!activeTobiProfile || activeTobiProfile.disabled===true) throw new Error("Dein TobiServices-Konto ist noch nicht bereit oder gesperrt.");
       if(!getOwnedThemeIds().has(theme.id)) throw new Error("Dieses Theme besitzt du noch nicht.");
-      await tobiDb.collection("users").doc(activeTobiUser.uid).update({equippedTheme:theme.id});
-      activeTobiProfile={...activeTobiProfile,equippedTheme:theme.id};
+      if(theme.id==="AdminMatrix"){
+        if(!isTobiAdmin()) throw new Error("Admin Matrix ist nur mit dem aktiven admin-Tag verfügbar.");
+        localStorage.setItem("jdnextTheme","AdminMatrix");
+      }else{
+        if(accountCoreSetEquippedTheme){
+          // Prefer the same authenticated Firebase session used by the Account Center.
+          const updatedProfile=await accountCoreSetEquippedTheme(theme.id);
+          activeTobiProfile={...activeTobiProfile,...updatedProfile,equippedTheme:theme.id};
+        }else{
+          await Promise.all([tobiAuthPersistenceReady,tobiAuthReady]);
+          const authUser=tobiAuth.currentUser;
+          if(!authUser || authUser.isAnonymous || authUser.uid!==activeTobiUser.uid){
+            throw new Error("Deine Anmeldung wird noch synchronisiert. Lade die Seite neu oder melde dich erneut an.");
+          }
+          await tobiDb.collection("users").doc(activeTobiUser.uid).update({equippedTheme:theme.id});
+          activeTobiProfile={...activeTobiProfile,equippedTheme:theme.id};
+        }
+        localStorage.removeItem("jdnextTheme");
+      }
     }else{
-      if(theme.id!=="Next") throw new Error("Melde dich an, um gekaufte Themes zu verwenden.");
+      if(theme.id!=="Next") throw new Error("Melde dich an, um freigeschaltete Themes zu verwenden.");
       localStorage.setItem("jdnextTheme","Next");
     }
     applyTheme(theme.id);
@@ -1644,46 +2121,26 @@ async function purchaseTheme(theme){
     showToast("Dein TobiServices-Konto ist gesperrt.");
     return;
   }
+  if(typeof accountCorePurchaseTheme!=="function"){
+    showToast("TobiServices wird noch geladen. Bitte erneut versuchen.");
+    return;
+  }
   try{
-    const profileRef=tobiDb.collection("users").doc(activeTobiUser.uid);
-    const eventId="theme-"+activeTobiUser.uid+"-"+theme.id;
-    const eventRef=tobiDb.collection("jdnextCoinEvents").doc(eventId);
-    const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
-    const result=await tobiDb.runTransaction(async transaction=>{
-      const profileSnap=await transaction.get(profileRef);
-      if(!profileSnap.exists) throw new Error("Dein TobiServices-Profil wurde nicht gefunden.");
-      const profile=profileSnap.data()||{};
-      if(profile.disabled===true) throw new Error("Dein TobiServices-Konto ist gesperrt.");
-      const coins=Number.isSafeInteger(profile.goldCoins)?profile.goldCoins:0;
-      const owned=Array.isArray(profile.ownedThemes)?profile.ownedThemes:[];
-      if(owned.includes(theme.id)) return {alreadyOwned:true,coins,owned};
-      if(coins<theme.price) throw new Error("Du brauchst mindestens "+theme.price+" Goldmünzen für dieses Theme.");
-      const nextOwned=[...owned,theme.id];
-      transaction.update(profileRef,{
-        goldCoins:coins-theme.price,
-        ownedThemes:nextOwned,
-        lastProfileChangeAt:stamp(),
-        lastJdnextCoinEventId:eventId
-      });
-      transaction.set(eventRef,{
-        uid:activeTobiUser.uid,
-        amount:-theme.price,
-        type:"theme-purchase",
-        themeId:theme.id,
-        createdAt:stamp()
-      });
-      return {alreadyOwned:false,coins:coins-theme.price,owned:nextOwned};
-    });
-    activeTobiProfile={...activeTobiProfile,goldCoins:result.coins,ownedThemes:result.owned};
+    const updated=await accountCorePurchaseTheme(theme.id);
+    if(!activeTobiUser || (updated.uid && activeTobiUser.uid!==updated.uid)){
+      throw new Error("Die Sitzung hat während des Theme-Kaufs gewechselt.");
+    }
+    activeTobiProfile={...activeTobiProfile,...updated};
     updateTobiLoginButton();
-    showToast(result.alreadyOwned?"Dieses Theme gehört dir bereits.":"🎨 "+theme.name+" gekauft · −"+theme.price+" Goldmünzen");
+    showToast(updated.alreadyOwned
+      ? "Dieses Theme gehört dir bereits."
+      : "🎨 "+theme.name+" gekauft · −"+theme.price+" Goldmünzen");
     renderThemeMenu();
   }catch(error){
     console.error("Theme purchase failed:",error);
     showToast(explainFirebaseError(error,"Der Theme-Kauf"));
   }
 }
-
 document.getElementById("themeBtn").onclick=openThemeMenu;
 
 // ---- PWA / App-Installation ----
@@ -1728,6 +2185,17 @@ oldAuth.onAuthStateChanged(user=>{
   currentUser=user;
 });
 
+let timetableRenderScheduled = false;
+function scheduleTimetableRender(){
+  if(timetableRenderScheduled) return;
+  timetableRenderScheduled = true;
+  const schedule = window.requestAnimationFrame || (callback=>setTimeout(callback,16));
+  schedule(()=>{
+    timetableRenderScheduled = false;
+    renderTimetable();
+  });
+}
+
 function renderAll(){
   renderWeekNav();
   renderTimetable();
@@ -1767,6 +2235,27 @@ document.getElementById("jumpToday").onclick=()=>{
 renderSetupBanner();
 renderAll();
 startMaintenanceListener();
+</script>
+<script type="module">
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry, purchaseJdnextTheme, setMaintenanceBypass, checkHalloweenThemeUnlock } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-core-stability-20261014c";
+onUser((user, profile, profileError) => {
+  window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
+    detail: {
+      user: user ? { uid:user.uid, email:user.email||"", displayName:user.displayName||"", isAnonymous:user.isAnonymous===true } : null,
+      profile,
+      profileError: profileError ? { code:String(profileError.code||""), message:String(profileError.message||profileError) } : null,
+      setEquippedTheme,
+      refreshProfileFromServer,
+      getLeaderboard,
+      syncPublicProfile,
+      saveJdnextHomeworkEntry,
+      reportJdnextHomeworkEntry,
+      purchaseJdnextTheme,
+      setMaintenanceBypass,
+      checkHalloweenThemeUnlock
+    }
+  }));
+});
 </script>
 </body>
 </html>
