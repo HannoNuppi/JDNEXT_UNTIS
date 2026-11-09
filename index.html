@@ -275,6 +275,7 @@
       <button class="loginbtn" id="installBtn" style="display:none">📱 App installieren</button>
       <button class="themebtn" id="leaderboardBtn" type="button" hidden style="display:none">🏆 Rangliste</button>
       <button class="themebtn" id="themeBtn" type="button">🎨 Themes</button>
+      <a class="themebtn" id="adventCalendarBtn" href="https://hannonuppi.github.io/Tobiservices-Account/advent.html" style="text-decoration:none">🎄 Adventskalender</a>
       <button class="loginbtn" id="loginBtn">TobiServices Account</button>
     </div>
   </div>
@@ -402,7 +403,8 @@ const EVENT_THEMES = [
   {id:"WinterEvent",name:"Winterwunder",price:0,description:"Festliches Mitternachtsblau, Eislicht und winterlicher Sternen-Trail",trail:["❄","✦","🎄"],bgA:"#07172c",bgB:"#12345c",bgC:"#7cbbd9",pink:"#bceaff",cyan:"#e6fbff",gold:"#ffe7a3",violet:"#8dbcf5",eventOnly:true},
   {id:"BirthdayEvent",name:"Birthday Bash",price:0,description:"Festlicher Roségold-Glow mit Konfetti- und Ballon-Trail",trail:["🎈","✦","🎉"],bgA:"#2a1230",bgB:"#71385e",bgC:"#d98b9d",pink:"#ff91c8",cyan:"#9df7ed",gold:"#ffe1a0",violet:"#c68bff",eventOnly:true},
   {id:"AdminMatrix",name:"Admin Matrix",price:0,description:"Exklusiv für den admin-Tag · animierter grüner Matrix-Code mit Neon-Glow",trail:["0","1","⌁","∑"],bgA:"#010604",bgB:"#03150a",bgC:"#06421c",pink:"#48ff83",cyan:"#b8ffca",gold:"#e4ffe9",violet:"#12b84e",eventOnly:true,adminOnly:true},
-  {id:"HalloweenEvent",name:"Halloween Afterdark",price:0,description:"Kürbis-Orange, Geisterviolett und ein Fledermaus-Trail · Freischaltung am 31. Oktober",trail:["🦇","🎃","✦"],bgA:"#15091e",bgB:"#381343",bgC:"#7b2a20",pink:"#ff823d",cyan:"#d6a0ff",gold:"#ffc16b",violet:"#9849c4",eventOnly:true,halloweenOnly:true}
+  {id:"HalloweenEvent",name:"Halloween Afterdark",price:0,description:"Kürbis-Orange, Geisterviolett und ein Fledermaus-Trail · Freischaltung am 31. Oktober",trail:["🦇","🎃","✦"],bgA:"#15091e",bgB:"#381343",bgC:"#7b2a20",pink:"#ff823d",cyan:"#d6a0ff",gold:"#ffc16b",violet:"#9849c4",eventOnly:true,halloweenOnly:true},
+  {id:"WinterGoldEvent",name:"Winter Gold",price:0,description:"Goldener Weihnachtsglanz mit Tannenwald, Sternenlicht und festlichem Geschenk-Trail",trail:["✦","🎁","❄"],bgA:"#10251b",bgB:"#4b3a13",bgC:"#957329",pink:"#e6bd62",cyan:"#dff5dd",gold:"#fff0ac",violet:"#c79a3d",eventOnly:true}
 ];
 
 /* =====================================================================
@@ -2237,7 +2239,7 @@ renderAll();
 startMaintenanceListener();
 </script>
 <script type="module">
-import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry, purchaseJdnextTheme, setMaintenanceBypass, checkHalloweenThemeUnlock } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-core-stability-20261014c";
+import { onUser, setEquippedTheme, refreshProfileFromServer, getLeaderboard, syncPublicProfile, saveJdnextHomeworkEntry, reportJdnextHomeworkEntry, purchaseJdnextTheme, setMaintenanceBypass, checkHalloweenThemeUnlock } from "https://hannonuppi.github.io/Tobiservices-Account/auth-core.js?v=account-core-stability-20261109a";
 onUser((user, profile, profileError) => {
   window.dispatchEvent(new CustomEvent("tobiservices-account-session", {
     detail: {
