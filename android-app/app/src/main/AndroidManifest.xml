@@ -76,6 +76,9 @@
         <activity-alias android:name=".ThemeIconHalloweenEvent" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_halloween_event" android:label="Untis Next – Halloween Afterdark">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity-alias>
+        <activity-alias android:name=".ThemeIconWinterGoldEvent" android:targetActivity=".MainActivity" android:enabled="false" android:exported="true" android:icon="@drawable/ic_theme_winter_gold_event" android:label="Untis Next – Winter Gold">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity-alias>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
