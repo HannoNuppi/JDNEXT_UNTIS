@@ -1,0 +1,74 @@
+name: Build Untis Next Switch NRO
+run-name: "Switch NRO · ${{ inputs.build_request_id || github.sha }}"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "switch-app/**"
+      - ".github/workflows/switch-nro.yml"
+  workflow_dispatch:
+    inputs:
+      build_request_id:
+        description: "Build request ID (set by the TobiServices Admin Center)"
+        required: false
+        type: string
+        default: "manual"
+      requested_by:
+        description: "Admin UID that requested the build"
+        required: false
+        type: string
+        default: "manual"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: untis-next-switch-nro
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Compile Untis Next Portal
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Compile NRO
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: |
+          set -euo pipefail
+          test -f "$DEVKITPRO/libnx/switch_rules"
+          make -C switch-app -j2
+          test -s switch-app/UntisNext.nro
+          ls -lh switch-app/UntisNext.nro
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UntisNext-NRO-${{ github.run_number }}
+          path: switch-app/UntisNext.nro
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish latest NRO release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: switch-nro
+          name: Untis Next Switch NRO
+          body: |
+            Automatisch mit GitHub Actions aus `HannoNuppi/JDNEXT_UNTIS` gebaut.
+            Build: ${{ github.run_number }}
+            Commit: ${{ github.sha }}
+
+            Enthalten ist ein kleines Switch-Portal fuer Untis Next und das TobiServices Admin Center.
+          prerelease: true
+          files: switch-app/UntisNext.nro
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
