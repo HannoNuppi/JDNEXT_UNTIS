@@ -38,6 +38,34 @@ TobiServices Admin Center by an active admin. The request is authenticated by
 the TobiServices Cloud Function and dispatched to GitHub Actions; the GitHub
 token is stored only as a Firebase Functions secret.
 
+## One-time Firebase setup for the website buttons
+
+The Untis Next header button and the TobiServices Admin Center both call the
+same protected callable function, `requestSwitchNroBuild`. Before those buttons
+can dispatch the GitHub workflow, deploy that function and configure its secret.
+
+1. Create a fine-grained GitHub token restricted to
+   `HannoNuppi/JDNEXT_UNTIS`. Grant **Actions: Read and write** and keep
+   **Metadata: Read-only**.
+2. In the `Tobiservices-Account` repository folder, run:
+
+   ```sh
+   firebase functions:secrets:set SWITCH_NRO_GITHUB_TOKEN
+   ```
+
+   Paste the token into the Firebase CLI prompt. Do not put it in source code,
+   Firestore, website HTML, or GitHub commits.
+3. Deploy the callable function to the `tobiservices` Firebase project:
+
+   ```sh
+   firebase deploy --only functions:requestSwitchNroBuild
+   ```
+
+The callable checks the current Firebase user's active `admin` tag on the
+server before contacting GitHub. The browser never receives the GitHub token.
+After setup, both website buttons can start a build; the NRO download and
+workflow status links point to the shared release and Actions run list.
+
 ## Limitations
 
 This first version is a web-portal launcher, not a native/offline recreation of
