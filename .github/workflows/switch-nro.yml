@@ -41,7 +41,7 @@ jobs:
         env:
           DEVKITPRO: /opt/devkitpro
         run: |
-          set -euo pipefail
+          set -eu
           test -f "$DEVKITPRO/libnx/switch_rules"
           make -C switch-app -j2
           test -s switch-app/UntisNext.nro
