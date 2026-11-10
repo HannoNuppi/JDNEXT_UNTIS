@@ -41,6 +41,38 @@ Die Vorschau enthält eine **Gold-Rangliste** im Kopfbereich. Sie sortiert synch
 
 Damit Hausaufgaben posten/melden, Profiländerungen und die Rangliste funktionieren, muss die aktuelle `firestore.rules` aus dem TobiServices-Account-Repository im Firebase-Projekt `tobiservices` veröffentlicht sein. Ein GitHub-Commit veröffentlicht Firestore-Regeln nicht automatisch. Am einfachsten ist es, das Repository `Tobiservices-Account` herunterzuladen und dort `deploy_tobiservices_rules.bat` auszuführen. Das Skript veröffentlicht nur die Regeln im Projekt `tobiservices`. **Nicht** `JDNEXT_UNTIS/firestore.rules` dafür verwenden: Dieses Repository gehört zum separaten Legacy-Projekt `next-untis-plus`.
 
+## Nintendo Switch NRO
+
+Untis Next has a small Switch homebrew portal. It opens the main Untis Next
+website or the TobiServices Admin Center in the Switch Web applet. The website
+continues to handle all accounts, permissions, timetable data, and admin
+operations; no admin secret is embedded in the NRO.
+
+- [Switch NRO build instructions](SWITCH_NRO.md)
+- [Latest NRO release](https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/tag/switch-nro)
+- [GitHub Actions build status](https://github.com/HannoNuppi/JDNEXT_UNTIS/actions/workflows/switch-nro.yml)
+
+Active admins can trigger a build from the **Switch NRO** shortcut in the
+Untis Next main header or from the dedicated section in the TobiServices Admin
+Center. GitHub Actions also rebuilds automatically when files under
+`switch-app/` or the NRO workflow change on `main`.
+
+### One-time backend setup
+
+The TobiServices callable function dispatches the workflow with a fine-grained
+GitHub token. Create a token restricted to `HannoNuppi/JDNEXT_UNTIS` with
+**Actions: Read and write** permission. Store it in Firebase Secret Manager
+from the `Tobiservices-Account` repository root, then deploy the callable:
+
+```powershell
+firebase functions:secrets:set SWITCH_NRO_GITHUB_TOKEN --project tobisevices
+firebase deploy --only functions:requestSwitchNroBuild --project tobisevices
+```
+
+The token is used only by the server-side function. Never put it in
+`index.html`, `admin.html`, or any other browser-delivered file. The backend
+checks the caller's current, non-disabled `admin` tag before every dispatch.
+
 ## Android APK
 
 Untis Next kann als Android-APK gebaut werden. Die GitHub-Action baut nach relevanten Änderungen automatisch eine installierbare Debug-APK. Im Web-App-Kopf gibt es auch einen **APK**-Link.
