@@ -44,19 +44,12 @@ jobs:
             autoconf automake libtool pkg-config curl xz-utils patch make ca-certificates
           rm -rf /var/lib/apt/lists/*
 
-      - name: Install Nintendo Switch SDL2 portlib
-        run: |
-          dkp-pacman -Sy --noconfirm
-          dkp-pacman -S --needed --noconfirm switch-sdl2
-
       - name: Compile NRO
         env:
           DEVKITPRO: /opt/devkitpro
         run: |
           set -eu
           test -f "$DEVKITPRO/libnx/switch_rules"
-          test -x "$DEVKITPRO/portlibs/switch/bin/sdl2-config"
-          sdl2-config --version
           sh switch-app/scripts/build_switch_curl.sh
           test -f "$DEVKITPRO/portlibs/switch/lib/libcurl.a"
           make -C switch-app -j2
