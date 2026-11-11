@@ -61,6 +61,7 @@ typedef enum {
 } Screen;
 
 static Account g_account;
+static bool g_socket_initialized = false;
 static bool g_maintenance = false;
 static char g_maintenance_message[500];
 static char g_status[220] = "Bereit.";
@@ -538,13 +539,15 @@ static bool is_week_a(void) {
     base.tm_hour = current.tm_hour = 12;
     time_t base_time = mktime(&base);
     time_t week_time = mktime(&current);
-    struct tm *b = localtime(&base_time);
-    struct tm *w = localtime(&week_time);
+    struct tm b = *localtime(&base_time);
+    struct tm w = *localtime(&week_time);
     /* Convert calendar dates to day counts, avoiding DST's 23/25-hour days. */
-    int base_days = b->tm_yday + 365 * (b->tm_year - 100);
-    int week_days = w->tm_yday + 365 * (w->tm_year - 100);
-    int leap_years_base = (b->tm_year + 1900 - 1) / 4 - (b->tm_year + 1900 - 1) / 100 + (b->tm_year + 1900 - 1) / 400;
-    int leap_years_week = (w->tm_year + 1900 - 1) / 4 - (w->tm_year + 1900 - 1) / 100 + (w->tm_year + 1900 - 1) / 400;
+    int base_days = b.tm_yday + 365 * (b.tm_year - 100);
+    int week_days = w.tm_yday + 365 * (w.tm_year - 100);
+    int base_year = b.tm_year + 1900;
+    int week_year = w.tm_year + 1900;
+    int leap_years_base = (base_year - 1) / 4 - (base_year - 1) / 100 + (base_year - 1) / 400;
+    int leap_years_week = (week_year - 1) / 4 - (week_year - 1) / 100 + (week_year - 1) / 400;
     int weeks = (week_days + leap_years_week - base_days - leap_years_base) / 7;
     return (weeks % 2) == 0;
 }
@@ -934,16 +937,18 @@ int main(int argc, char *argv[]) {
 
     initialize_week();
     Result socket_rc = socketInitializeDefault();
-    if (R_FAILED(socket_rc)) {
+    g_socket_initialized = R_SUCCEEDED(socket_rc);
+    if (!g_socket_initialized) {
         snprintf(g_status, sizeof(g_status), "Switch-Netzwerkdienst nicht verfuegbar (0x%08X).", (unsigned)socket_rc);
     }
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    snprintf(g_status, sizeof(g_status), "Initialisiere native Switch-Verbindung ...");
     consoleUpdate(NULL);
 
     /* switch-curl uses libnx's native TLS service and system trust store. */
-    load_maintenance();
-    snprintf(g_status, sizeof(g_status), "Native Switch-App bereit. Keine Website wird geoeffnet.");
+    if (g_socket_initialized) {
+        load_maintenance();
+        snprintf(g_status, sizeof(g_status), "Native Switch-App bereit. Keine Website wird geoeffnet.");
+    }
     draw_timetable();
 
     while (appletMainLoop()) {
@@ -1028,7 +1033,7 @@ int main(int argc, char *argv[]) {
     }
 
     curl_global_cleanup();
-    socketExit();
+    if (g_socket_initialized) socketExit();
     consoleExit(NULL);
     return 0;
 }
