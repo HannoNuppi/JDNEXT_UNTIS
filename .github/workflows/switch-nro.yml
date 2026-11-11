@@ -37,6 +37,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Install host build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            autoconf automake libtool pkg-config curl xz-utils patch make ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
       - name: Compile NRO
         env:
           DEVKITPRO: /opt/devkitpro
