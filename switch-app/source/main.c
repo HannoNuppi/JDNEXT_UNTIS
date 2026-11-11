@@ -1122,14 +1122,21 @@ static bool save_homework_entry(const char *hw_key, const char *text,
         return false;
     }
 
-    char image_write[1280];
-    image_write[0] = 0;
+    char *image_write = NULL;
     if (has_image) {
+        size_t image_write_capacity = image_write_len + 1000;
+        image_write = (char *)malloc(image_write_capacity);
+        if (!image_write) {
+            free(body);
+            snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer das Bild-Dokument.");
+            return false;
+        }
+
         char image_path[500];
         snprintf(image_path, sizeof(image_path),
             "projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s/images/img0",
             TOBI_PROJECT, hw_key, entry_id);
-        snprintf(image_write, sizeof(image_write),
+        int image_needed = snprintf(image_write, image_write_capacity,
             ",{\"update\":{\"name\":\"%s\",\"fields\":{"
               "\"filename\":{\"stringValue\":\"%s\"},"
               "\"dataUrl\":{\"stringValue\":\"%s\"}"
@@ -1138,7 +1145,14 @@ static bool save_homework_entry(const char *hw_key, const char *text,
               "\"setToServerValue\":\"REQUEST_TIME\"}],"
             "\"currentDocument\":{\"exists\":false}}",
             image_path, safe_filename, image->data_url);
+        if (image_needed < 0 || (size_t)image_needed >= image_write_capacity) {
+            free(image_write);
+            free(body);
+            snprintf(g_status, sizeof(g_status), "Bild-Dokument konnte nicht vorbereitet werden.");
+            return false;
+        }
     }
+    const char *image_write_json = image_write ? image_write : "";
 
     int needed;
     if (reward) {
@@ -1198,7 +1212,7 @@ static bool save_homework_entry(const char *hw_key, const char *text,
           "]}",
           TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author, images_field,
           TOBI_PROJECT, hw_key, entry_id, auth_uid, auth_uid, owner_account_value,
-          image_write,
+          image_write_json,
           TOBI_PROJECT, auth_uid, event_id,
           TOBI_PROJECT, event_id, auth_uid, hw_key, entry_id);
     } else {
@@ -1233,9 +1247,10 @@ static bool save_homework_entry(const char *hw_key, const char *text,
           "]}",
           TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author, images_field,
           TOBI_PROJECT, hw_key, entry_id, auth_uid, owner_account_value,
-          image_write);
+          image_write_json);
     }
 
+    free(image_write);
     if (needed < 0 || (size_t)needed >= body_capacity) {
         free(body);
         snprintf(g_status, sizeof(g_status), "Hausaufgabe konnte nicht vorbereitet werden (zu gross).");
