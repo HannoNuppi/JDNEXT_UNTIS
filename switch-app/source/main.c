@@ -263,23 +263,6 @@ static void json_get_string(const char *s, JsonToken *t, int n, int obj,
     json_copy_string(s, t, value, out, cap);
 }
 
-static bool json_get_bool(const char *s, JsonToken *t, int n, int obj, const char *key) {
-    int value = json_object_get(s, t, n, obj, key);
-    return value >= 0 && t[value].type == 'p' &&
-           (strncmp(s + t[value].start, "true", 4) == 0);
-}
-
-static int json_get_int(const char *s, JsonToken *t, int n, int obj, const char *key, int fallback) {
-    int value = json_object_get(s, t, n, obj, key);
-    if (value < 0) return fallback;
-    char tmp[32];
-    size_t len = (size_t)(t[value].end - t[value].start);
-    if (len == 0 || len >= sizeof(tmp)) return fallback;
-    memcpy(tmp, s + t[value].start, len);
-    tmp[len] = 0;
-    return atoi(tmp);
-}
-
 static void firestore_field_string(const char *s, JsonToken *t, int n, int fields,
                                    const char *field, char *out, size_t cap) {
     int wrapper = json_object_get(s, t, n, fields, field);
@@ -820,10 +803,9 @@ static void request_nro_build(void) {
 }
 
 static void toggle_maintenance(void) {
-    char data[900], safe_message[700];
+    char data[900], safe_message[700], message[500] = "";
     bool next = !g_maintenance;
     if (next) {
-        char message[500] = "";
         if (!keyboard_input("Wartungsmeldung", "Optionale Nachricht fuer Besucher", false,
                             message, sizeof(message))) {
             snprintf(g_status, sizeof(g_status), "Wartungsmeldung nicht geaendert.");
@@ -839,7 +821,7 @@ static void toggle_maintenance(void) {
     bool ok = call_function("setMaintenanceMode", data, &r);
     if (ok) {
         g_maintenance = next;
-        snprintf(g_maintenance_message, sizeof(g_maintenance_message), "%s", next ? safe_message : "");
+        snprintf(g_maintenance_message, sizeof(g_maintenance_message), "%s", next ? message : "");
         snprintf(g_status, sizeof(g_status), "Wartungsmodus %s.", next ? "aktiviert" : "deaktiviert");
     } else {
         snprintf(g_status, sizeof(g_status), "Wartungsmodus konnte nicht geaendert werden (HTTP %ld).", r.status);
@@ -881,7 +863,6 @@ static void show_admin_users(void) {
     padInitializeDefault(&waitpad);
     while (appletMainLoop()) {
         padUpdate(&waitpad);
-        padUpdate(&pad);
         u64 pressed = padGetButtonsDown(&waitpad);
         if (pressed & HidNpadButton_B) break;
         if (pressed & HidNpadButton_Plus) break;
