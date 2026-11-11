@@ -472,7 +472,7 @@ static bool firebase_anonymous_session(const char *api_key, GuestSession *sessio
         "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=%s", api_key);
 
     HttpResponse r;
-    if (!http_request(url, "POST", "{\\"returnSecureToken\\":true}", NULL, &r)) {
+    if (!http_request(url, "POST", "{\"returnSecureToken\":true}", NULL, &r)) {
         snprintf(g_status, sizeof(g_status),
             "Gast-Anmeldung fehlgeschlagen (HTTP %ld).", r.status);
         http_response_free(&r);
@@ -527,17 +527,17 @@ static bool save_classwork_entry(const char *hw_key, const char *title) {
     make_document_id(id, sizeof(id));
 
     int needed = snprintf(body, sizeof(body),
-        "{\\"writes\\":[{"
-          "\\"update\\":{"
-            "\\"name\\":\\"projects/%s/databases/(default)/documents/classwork/%s/entries/%s\\","
-            "\\"fields\\":{"
-              "\\"title\\":{\\"stringValue\\":\\"%s\\"},"
-              "\\"createdBy\\":{\\"stringValue\\":\\"%s\\"}"
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/classwork/%s/entries/%s\","
+            "\"fields\":{"
+              "\"title\":{\"stringValue\":\"%s\"},"
+              "\"createdBy\":{\"stringValue\":\"%s\"}"
             "}"
           "},"
-          "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
-            "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
-          "\\"currentDocument\\":{\\"exists\\":false}"
+          "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}],"
+          "\"currentDocument\":{\"exists\":false}"
         "}]}",
         OLD_PROJECT, hw_key, id, safe_title, g_guestOld.uid);
 
@@ -582,116 +582,108 @@ static bool save_homework_entry(const char *hw_key, const char *text,
     }
 
     char safe_text[2100], safe_author[200], entry_id[128], body[14000];
-    char event_id[256];
+    char event_id[256], owner_account_value[220];
     json_escape(clean_text, safe_text, sizeof(safe_text));
     json_escape(clean_author, safe_author, sizeof(safe_author));
     make_document_id(entry_id, sizeof(entry_id));
     snprintf(event_id, sizeof(event_id), "reward-%s-%s", hw_key, entry_id);
+    if (g_account.signedIn) {
+        snprintf(owner_account_value, sizeof(owner_account_value),
+            "{\"stringValue\":\"%s\"}", auth_uid);
+    } else {
+        snprintf(owner_account_value, sizeof(owner_account_value), "{\"nullValue\":null}");
+    }
 
     int needed;
     if (reward) {
         needed = snprintf(body, sizeof(body),
-          "{\\"writes\\":["
-            "{\\"update\\":{"
-              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\\","
-              "\\"fields\\":{"
-                "\\"text\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"author\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"images\\":{\\"arrayValue\\":{}},"
-                "\\"reportCount\\":{\\"integerValue\\":\\"0\\"}"
+          "{\"writes\":["
+            "{\"update\":{"
+              "\"name\":\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\","
+              "\"fields\":{"
+                "\"text\":{\"stringValue\":\"%s\"},"
+                "\"author\":{\"stringValue\":\"%s\"},"
+                "\"images\":{\"arrayValue\":{}},"
+                "\"reportCount\":{\"integerValue\":\"0\"}"
               "}"
             "},"
-            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
-              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
-            "\\"currentDocument\\":{\\"exists\\":false}"
+            "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+              "\"setToServerValue\":\"REQUEST_TIME\"}],"
+            "\"currentDocument\":{\"exists\":false}"
             "},"
-            "{\\"update\\":{"
-              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomeworkPrivate/%s/entries/%s\\","
-              "\\"fields\\":{"
-                "\\"authorAuthUid\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"authorTobiUid\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"authorTobiAccountUid\\":{\\"stringValue\\":\\"%s\\"}"
+            "{\"update\":{"
+              "\"name\":\"projects/%s/databases/(default)/documents/jdnextHomeworkPrivate/%s/entries/%s\","
+              "\"fields\":{"
+                "\"authorAuthUid\":{\"stringValue\":\"%s\"},"
+                "\"authorTobiUid\":{\"stringValue\":\"%s\"},"
+                "\"authorTobiAccountUid\":{\"stringValue\":\"%s\"}"
               "}"
             "},"
-            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
-              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
-            "\\"currentDocument\\":{\\"exists\\":false}"
+            "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+              "\"setToServerValue\":\"REQUEST_TIME\"}],"
+            "\"currentDocument\":{\"exists\":false}"
             "},"
-            "{\\"update\\":{"
-              "\\"name\\":\\"projects/%s/databases/(default)/documents/users/%s\\","
-              "\\"fields\\":{"
-                "\\"lastJdnextCoinEventId\\":{\\"stringValue\\":\\"%s\\"}"
-              "}"
+            "{\"update\":{"
+              "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+              "\"fields\":{\"lastJdnextCoinEventId\":{\"stringValue\":\"%s\"}}"
             "},"
-            "\\"updateMask\\":{\\"fieldPaths\\":[\\"lastJdnextCoinEventId\\"]},"
-            "\\"updateTransforms\\":["
-              "{\\"fieldPath\\":\\"goldCoins\\",\\"increment\\":{\\"integerValue\\":\\"10\\"}},"
-              "{\\"fieldPath\\":\\"lastProfileChangeAt\\",\\"setToServerValue\\":\\"REQUEST_TIME\\"}"
+            "\"updateMask\":{\"fieldPaths\":[\"lastJdnextCoinEventId\"]},"
+            "\"updateTransforms\":["
+              "{\"fieldPath\":\"goldCoins\",\"increment\":{\"integerValue\":\"10\"}},"
+              "{\"fieldPath\":\"lastProfileChangeAt\",\"setToServerValue\":\"REQUEST_TIME\"}"
             "],"
-            "\\"currentDocument\\":{\\"exists\\":true}"
+            "\"currentDocument\":{\"exists\":true}"
             "},"
-            "{\\"update\\":{"
-              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextCoinEvents/%s\\","
-              "\\"fields\\":{"
-                "\\"uid\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"amount\\":{\\"integerValue\\":\\"10\\"},"
-                "\\"type\\":{\\"stringValue\\":\\"homework-post\\"},"
-                "\\"hwKey\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"entryId\\":{\\"stringValue\\":\\"%s\\"}"
+            "{\"update\":{"
+              "\"name\":\"projects/%s/databases/(default)/documents/jdnextCoinEvents/%s\","
+              "\"fields\":{"
+                "\"uid\":{\"stringValue\":\"%s\"},"
+                "\"amount\":{\"integerValue\":\"10\"},"
+                "\"type\":{\"stringValue\":\"homework-post\"},"
+                "\"hwKey\":{\"stringValue\":\"%s\"},"
+                "\"entryId\":{\"stringValue\":\"%s\"}"
               "}"
             "},"
-            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
-              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
-            "\\"currentDocument\\":{\\"exists\\":false}"
+            "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+              "\"setToServerValue\":\"REQUEST_TIME\"}],"
+            "\"currentDocument\":{\"exists\":false}"
           "}"
-          "]}", 
+          "]}",
           TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author,
           TOBI_PROJECT, hw_key, entry_id, auth_uid, auth_uid, auth_uid,
           TOBI_PROJECT, auth_uid, event_id,
           TOBI_PROJECT, event_id, auth_uid, hw_key, entry_id);
     } else {
         needed = snprintf(body, sizeof(body),
-          "{\\"writes\\":["
-            "{\\"update\\":{"
-              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\\","
-              "\\"fields\\":{"
-                "\\"text\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"author\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"images\\":{\\"arrayValue\\":{}},"
-                "\\"reportCount\\":{\\"integerValue\\":\\"0\\"}"
+          "{\"writes\":["
+            "{\"update\":{"
+              "\"name\":\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\","
+              "\"fields\":{"
+                "\"text\":{\"stringValue\":\"%s\"},"
+                "\"author\":{\"stringValue\":\"%s\"},"
+                "\"images\":{\"arrayValue\":{}},"
+                "\"reportCount\":{\"integerValue\":\"0\"}"
               "}"
             "},"
-            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
-              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
-            "\\"currentDocument\\":{\\"exists\\":false}"
+            "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+              "\"setToServerValue\":\"REQUEST_TIME\"}],"
+            "\"currentDocument\":{\"exists\":false}"
             "},"
-            "{\\"update\\":{"
-              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomeworkPrivate/%s/entries/%s\\","
-              "\\"fields\\":{"
-                "\\"authorAuthUid\\":{\\"stringValue\\":\\"%s\\"},"
-                "\\"authorTobiUid\\":{\\"nullValue\\":null},"
-                "\\"authorTobiAccountUid\\":%s"
+            "{\"update\":{"
+              "\"name\":\"projects/%s/databases/(default)/documents/jdnextHomeworkPrivate/%s/entries/%s\","
+              "\"fields\":{"
+                "\"authorAuthUid\":{\"stringValue\":\"%s\"},"
+                "\"authorTobiUid\":{\"nullValue\":null},"
+                "\"authorTobiAccountUid\":%s"
               "}"
             "},"
-            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
-              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
-            "\\"currentDocument\\":{\\"exists\\":false}"
+            "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+              "\"setToServerValue\":\"REQUEST_TIME\"}],"
+            "\"currentDocument\":{\"exists\":false}"
           "}"
-          "]}", TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author,
-          TOBI_PROJECT, hw_key, entry_id, auth_uid,
-          g_account.signedIn ? "{\\"stringValue\\":\\"account\\\"}" : "{\\"nullValue\\":null}");
-        /* Keep a signed-in but non-rewarding account UID distinct from the anonymous guest case. */
-        if (g_account.signedIn) {
-            char owner_uid[200];
-            snprintf(owner_uid, sizeof(owner_uid), "{\\"stringValue\\":\\"%s\\"}", auth_uid);
-            char *placeholder = strstr(body, "{\\"stringValue\\":\\"account\\"}");
-            if (placeholder) {
-                char tail[12000];
-                snprintf(tail, sizeof(tail), "%s", placeholder + strlen("{\\"stringValue\\":\\"account\\"}"));
-                snprintf(placeholder, sizeof(body) - (size_t)(placeholder - body), "%s%s", owner_uid, tail);
-                needed = (int)strlen(body);
-            }
-        }
+          "]}",
+          TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author,
+          TOBI_PROJECT, hw_key, entry_id, auth_uid, owner_account_value);
     }
 
     if (needed < 0 || (size_t)needed >= sizeof(body)) {
