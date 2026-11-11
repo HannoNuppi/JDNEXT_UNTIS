@@ -43,7 +43,7 @@ jobs:
         run: |
           set -eu
           test -f "$DEVKITPRO/libnx/switch_rules"
-          pacman -S --needed --noconfirm switch-curl
+          sh switch-app/scripts/build_switch_curl.sh
           test -f "$DEVKITPRO/portlibs/switch/lib/libcurl.a"
           make -C switch-app -j2
           test -s switch-app/UntisNext.nro
