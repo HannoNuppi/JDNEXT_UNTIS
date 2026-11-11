@@ -708,16 +708,58 @@ static bool save_homework_entry(const char *hw_key, const char *text,
     return ok;
 }
 
+static bool call_function_with_token(const char *name, const char *data_json,
+                                     const char *token, HttpResponse *out) {
+    if (!token || !token[0]) {
+        snprintf(g_status, sizeof(g_status), "Bitte zuerst eine Firebase-Sitzung herstellen.");
+        return false;
+    }
+    char url[500], body[4000];
+    snprintf(url, sizeof(url),
+        "https://europe-west1-tobiservices.cloudfunctions.net/%s", name);
+    snprintf(body, sizeof(body), "{\"data\":%s}", data_json ? data_json : "{}");
+    return http_request(url, "POST", body, token, out);
+}
+
 static bool call_function(const char *name, const char *data_json, HttpResponse *out) {
     if (!g_account.signedIn || !g_account.idToken[0]) {
         snprintf(g_status, sizeof(g_status), "Bitte zuerst mit TobiServices anmelden.");
         return false;
     }
-    char url[500], body[2200];
-    snprintf(url, sizeof(url),
-        "https://europe-west1-tobiservices.cloudfunctions.net/%s", name);
-    snprintf(body, sizeof(body), "{\"data\":%s}", data_json ? data_json : "{}");
-    return http_request(url, "POST", body, g_account.idToken, out);
+    return call_function_with_token(name, data_json, g_account.idToken, out);
+}
+
+static bool report_homework_entry(const char *hw_key, const char *entry_id) {
+    const char *token = NULL;
+    if (g_account.signedIn) {
+        token = g_account.idToken;
+    } else {
+        if (!firebase_anonymous_session(TOBI_API_KEY, &g_guestTobi)) return false;
+        token = g_guestTobi.idToken;
+    }
+
+    char safe_key[180], safe_id[260], payload[520];
+    json_escape(hw_key, safe_key, sizeof(safe_key));
+    json_escape(entry_id, safe_id, sizeof(safe_id));
+    snprintf(payload, sizeof(payload),
+        "{\"hwKey\":\"%s\",\"entryId\":\"%s\"}", safe_key, safe_id);
+
+    HttpResponse response;
+    bool ok = call_function_with_token(
+        "reportJdnextHomeworkEntryNative", payload, token, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status),
+            "Meldung fehlgeschlagen (HTTP %ld).", response.status);
+        if (response.data && strstr(response.data, "already-exists")) {
+            snprintf(g_status, sizeof(g_status), "Du hast diesen Eintrag bereits gemeldet.");
+        } else if (response.data && strstr(response.data, "permission-denied")) {
+            snprintf(g_status, sizeof(g_status), "Eigene Hausaufgaben koennen nicht gemeldet werden.");
+        }
+    } else {
+        snprintf(g_status, sizeof(g_status), "Meldung gespeichert. Der Report-Zaehler wurde aktualisiert.");
+    }
+    http_response_free(&response);
+    return ok;
 }
 
 /* ----------------------------- Account data ---------------------------- */
@@ -1329,6 +1371,7 @@ int main(int argc, char *argv[]) {
                     snprintf(g_status, sizeof(g_status), "Lade Hausaufgaben und Klassenarbeiten ...");
                     draw_loading("Lade Hausaufgaben und Klassenarbeiten ...");
                     load_lesson_entries();
+                    g_menu_selection = 0;
                     g_screen = SCREEN_LESSON;
                 } else {
                     snprintf(g_status, sizeof(g_status), "Diese Stunde ist als Freistunde eingetragen.");
@@ -1340,10 +1383,73 @@ int main(int argc, char *argv[]) {
             }
             draw_timetable();
         } else if (g_screen == SCREEN_LESSON) {
-            if (down & HidNpadButton_B) g_screen = SCREEN_TIMETABLE;
+            if (down & HidNpadButton_B) {
+                g_screen = SCREEN_TIMETABLE;
+            }
+            if (down & HidNpadButton_Up) {
+                if (g_entry_count > 0) {
+                    g_menu_selection = (g_menu_selection + g_entry_count - 1) % g_entry_count;
+                }
+            }
+            if (down & HidNpadButton_Down) {
+                if (g_entry_count > 0) {
+                    g_menu_selection = (g_menu_selection + 1) % g_entry_count;
+                }
+            }
             if (down & HidNpadButton_Y) {
+                draw_loading("Aktualisiere Hausaufgaben und Klassenarbeiten ...");
                 load_lesson_entries();
+                if (g_entry_count > 0) g_menu_selection %= g_entry_count;
                 snprintf(g_status, sizeof(g_status), "Eintraege aktualisiert.");
+            }
+            if (down & HidNpadButton_A) {
+                char text[1001] = "";
+                if (keyboard_input("Neue Hausaufgabe", "Aufgabentext (3 bis 1000 Zeichen)",
+                                   false, text, sizeof(text))) {
+                    const char *author = g_account.signedIn && g_account.displayName[0]
+                        ? g_account.displayName : "Switch";
+                    char key[64];
+                    date_key_for_lesson(g_day, g_period, key, sizeof(key));
+                    draw_loading("Speichere Hausaufgabe ...");
+                    if (save_homework_entry(key, text, author)) {
+                        load_lesson_entries();
+                        g_menu_selection = 0;
+                    }
+                } else {
+                    snprintf(g_status, sizeof(g_status), "Erstellen abgebrochen.");
+                }
+            }
+            if (down & HidNpadButton_X) {
+                char title[121] = "";
+                if (keyboard_input("Neue Klassenarbeit", "Bezeichnung (2 bis 120 Zeichen)",
+                                   false, title, sizeof(title))) {
+                    char key[64];
+                    date_key_for_lesson(g_day, g_period, key, sizeof(key));
+                    draw_loading("Speichere Klassenarbeit ...");
+                    if (save_classwork_entry(key, title)) {
+                        load_lesson_entries();
+                        g_menu_selection = 0;
+                    }
+                } else {
+                    snprintf(g_status, sizeof(g_status), "Erstellen abgebrochen.");
+                }
+            }
+            if (down & HidNpadButton_R) {
+                if (g_entry_count > 0 && g_menu_selection >= 0 &&
+                    g_menu_selection < g_entry_count &&
+                    !g_entries[g_menu_selection].classwork &&
+                    !g_entries[g_menu_selection].legacy) {
+                    char key[64];
+                    date_key_for_lesson(g_day, g_period, key, sizeof(key));
+                    draw_loading("Sende Meldung ...");
+                    if (report_homework_entry(key, g_entries[g_menu_selection].id)) {
+                        load_lesson_entries();
+                        if (g_entry_count > 0) g_menu_selection %= g_entry_count;
+                        else g_menu_selection = 0;
+                    }
+                } else {
+                    snprintf(g_status, sizeof(g_status), "Auswahl ist keine meldbare neue Hausaufgabe.");
+                }
             }
             draw_lesson();
         } else if (g_screen == SCREEN_ACCOUNT) {
