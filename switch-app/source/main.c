@@ -75,6 +75,15 @@ typedef struct {
     bool valid;
 } GuestSession;
 
+typedef struct {
+    char uid[160];
+    char displayName[96];
+    char email[160];
+    char tags[512];
+    int goldCoins;
+    bool disabled;
+} AdminUser;
+
 typedef enum {
     SCREEN_TIMETABLE = 0,
     SCREEN_LESSON,
@@ -87,6 +96,8 @@ typedef enum {
 static Account g_account;
 static GuestSession g_guestTobi;
 static GuestSession g_guestOld;
+static AdminUser g_admin_users[24];
+static int g_admin_user_count = 0;
 static unsigned long g_write_counter = 0;
 static bool g_socket_initialized = false;
 static bool g_maintenance = false;
@@ -1648,60 +1659,279 @@ static void toggle_maintenance(void) {
     http_response_free(&r);
 }
 
-static void show_admin_users(void) {
+static bool parse_plain_bool(const char *json, JsonToken *tokens, int count,
+                             int object, const char *field) {
+    int value = json_object_get(json, tokens, count, object, field);
+    return value >= 0 && tokens[value].type == 'p'
+        && strncmp(json + tokens[value].start, "true", 4) == 0;
+}
+
+static bool load_admin_user_list(void) {
     HttpResponse r;
-    bool ok = call_function("listTobiUsers", "{}", &r);
-    if (!ok) {
+    if (!call_function("listTobiUsers", "{}", &r)) {
         snprintf(g_status, sizeof(g_status), "Accountliste nicht verfuegbar (HTTP %ld).", r.status);
         http_response_free(&r);
-        return;
+        return false;
     }
 
     JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!t) {
+        http_response_free(&r);
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer die Accountliste.");
+        return false;
+    }
     int n = 0, root = json_parse(r.data, t, &n);
-    int data = root >= 0 ? json_object_get(r.data, t, n, root, "result") : -1;
-    if (data < 0 && root >= 0) data = json_object_get(r.data, t, n, root, "data");
-    int users = data >= 0 ? json_object_get(r.data, t, n, data, "users") : -1;
+    int result = root >= 0 ? json_object_get(r.data, t, n, root, "result") : -1;
+    if (result < 0 && root >= 0) result = json_object_get(r.data, t, n, root, "data");
+    int users = result >= 0 ? json_object_get(r.data, t, n, result, "users") : -1;
 
-    ui_begin();
-    draw_sidebar("ADMIN");
-    draw_top_header("ACCOUNT-MONITOR", "TOBISERVICES-KONTEN");
-    int shown = 0;
+    g_admin_user_count = 0;
     for (int i = 0; i < 24; i++) {
         int item = json_array_get(t, n, users, i);
         if (item < 0) break;
-        char name[100] = "", email[140] = "", uid[140] = "";
-        json_get_string(r.data, t, n, item, "displayName", name, sizeof(name));
-        json_get_string(r.data, t, n, item, "email", email, sizeof(email));
-        json_get_string(r.data, t, n, item, "uid", uid, sizeof(uid));
-        int column = i / 12;
-        int row = i % 12;
-        int x = 252 + column * 500;
-        int y = 145 + row * 39;
-        ui_card(x, y, 478, 33, false);
-        ui_text(x + 12, y + 7, name[0] ? name : "(OHNE NAMEN)", 1, UI_TEXT);
-        ui_text(x + 250, y + 7, email[0] ? email : uid, 1, UI_MUTED);
-        shown++;
-    }
-    if (!shown) ui_text(278, 170, "KEINE ACCOUNTS ODER ANTWORT NICHT ERKANNT", 1, UI_MUTED);
-    ui_text(252, 629, "B ZURUECK  |  + BEENDEN", 1, UI_CYAN);
-    draw_status_bar();
-    ui_end();
-
-    PadState waitpad;
-    padInitializeDefault(&waitpad);
-    while (appletMainLoop()) {
-        padUpdate(&waitpad);
-        u64 pressed = padGetButtonsDown(&waitpad);
-        if (pressed & HidNpadButton_B) break;
-        if (pressed & HidNpadButton_Plus) break;
-        svcSleepThread(16000000ULL);
+        AdminUser *user = &g_admin_users[g_admin_user_count++];
+        memset(user, 0, sizeof(*user));
+        json_get_string(r.data, t, n, item, "uid", user->uid, sizeof(user->uid));
+        json_get_string(r.data, t, n, item, "displayName", user->displayName, sizeof(user->displayName));
+        json_get_string(r.data, t, n, item, "email", user->email, sizeof(user->email));
+        user->goldCoins = 0;
+        int coins = json_object_get(r.data, t, n, item, "goldCoins");
+        if (coins >= 0 && t[coins].type == 'p') {
+            char number[32];
+            size_t len = (size_t)(t[coins].end - t[coins].start);
+            if (len > 0 && len < sizeof(number)) {
+                memcpy(number, r.data + t[coins].start, len);
+                number[len] = 0;
+                user->goldCoins = atoi(number);
+            }
+        }
+        user->disabled = parse_plain_bool(r.data, t, n, item, "disabled");
+        int tags = json_object_get(r.data, t, n, item, "tags");
+        for (int j = 0; j < 20; j++) {
+            int tag_item = json_array_get(t, n, tags, j);
+            if (tag_item < 0) break;
+            char tag[40];
+            json_copy_string(r.data, t, tag_item, tag, sizeof(tag));
+            if (!tag[0]) continue;
+            if (user->tags[0]) strncat(user->tags, ", ",
+                sizeof(user->tags) - strlen(user->tags) - 1);
+            strncat(user->tags, tag, sizeof(user->tags) - strlen(user->tags) - 1);
+        }
     }
 
     free(t);
     http_response_free(&r);
-    snprintf(g_status, sizeof(g_status), "%d Account-Eintraege angezeigt.", shown);
+    return true;
 }
+
+static void draw_admin_users_screen(int selected) {
+    ui_begin();
+    draw_sidebar("ADMIN");
+    draw_top_header("ACCOUNT-MANAGER", "A SPERRE UMSCHALTEN  |  X TAGS BEARBEITEN  |  Y AKTUALISIEREN");
+    for (int i = 0; i < g_admin_user_count; i++) {
+        int column = i / 12;
+        int row = i % 12;
+        int x = 252 + column * 500;
+        int y = 145 + row * 39;
+        bool active = i == selected;
+        ui_card(x, y, 478, 33, active);
+        ui_text(x + 10, y + 7, g_admin_users[i].displayName[0]
+            ? g_admin_users[i].displayName : "(OHNE NAMEN)", 1, active ? UI_CYAN : UI_TEXT);
+        ui_text(x + 206, y + 7, g_admin_users[i].email, 1, UI_MUTED);
+        ui_badge(x + 388, y + 4, 80,
+            g_admin_users[i].disabled ? "GESPERRT" : "AKTIV",
+            g_admin_users[i].disabled ? UI_RED : UI_SURFACE_2,
+            g_admin_users[i].disabled ? UI_BG : UI_GREEN);
+    }
+    if (!g_admin_user_count) ui_text(278, 170, "KEINE ACCOUNTS GEFUNDEN", 1, UI_MUTED);
+    if (selected >= 0 && selected < g_admin_user_count) {
+        ui_card(252, 630, 996, 35, false);
+        ui_text(270, 643, g_admin_users[selected].tags[0]
+            ? g_admin_users[selected].tags : "KEINE TAGS", 1, UI_MUTED);
+    }
+    draw_status_bar();
+    ui_end();
+}
+
+static bool load_allowed_tags(char tags[][32], int *tag_count) {
+    *tag_count = 0;
+    HttpResponse r;
+    if (!firestore_get(TOBI_PROJECT, "siteSettings/accessControl", g_account.idToken, &r)) {
+        http_response_free(&r);
+        snprintf(tags[(*tag_count)++], 32, "admin");
+        snprintf(tags[(*tag_count)++], 32, "dance-beta");
+        return false;
+    }
+    JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!t) {
+        http_response_free(&r);
+        return false;
+    }
+    int n = 0, root = json_parse(r.data, t, &n);
+    int fields = root >= 0 ? json_object_get(r.data, t, n, root, "fields") : -1;
+    int wrapper = json_object_get(r.data, t, n, fields, "tags");
+    int array = json_object_get(r.data, t, n, wrapper, "arrayValue");
+    int values = json_object_get(r.data, t, n, array, "values");
+    if (values >= 0 && t[values].type == 'a') {
+        for (int i = 0; i < 100 && *tag_count < 100; i++) {
+            int item = json_array_get(t, n, values, i);
+            if (item < 0) break;
+            char tag[32];
+            json_copy_string(r.data, t, item, tag, sizeof(tag));
+            if (tag[0]) snprintf(tags[(*tag_count)++], 32, "%s", tag);
+        }
+    }
+    free(t);
+    http_response_free(&r);
+    if (*tag_count == 0) {
+        snprintf(tags[(*tag_count)++], 32, "admin");
+        snprintf(tags[(*tag_count)++], 32, "dance-beta");
+    }
+    return true;
+}
+
+static bool edit_admin_user_tags(AdminUser *user) {
+    char raw[500] = "";
+    if (!keyboard_input("TobiServices-Tags", "Tags durch Kommas trennen", false,
+                        raw, sizeof(raw))) {
+        snprintf(g_status, sizeof(g_status), "Tag-Bearbeitung abgebrochen.");
+        return false;
+    }
+
+    char allowed[100][32];
+    int allowed_count = 0;
+    load_allowed_tags(allowed, &allowed_count);
+
+    char tags_json[2200] = "[";
+    char parsed[500];
+    snprintf(parsed, sizeof(parsed), "%s", raw);
+    char *save = NULL;
+    char *part = strtok_r(parsed, ",", &save);
+    int count = 0;
+    while (part && count < 20) {
+        while (*part && isspace((unsigned char)*part)) part++;
+        size_t len = strlen(part);
+        while (len && isspace((unsigned char)part[len - 1])) part[--len] = 0;
+        for (size_t i = 0; i < len; i++) part[i] = (char)tolower((unsigned char)part[i]);
+
+        if (len == 0) {
+            part = strtok_r(NULL, ",", &save);
+            continue;
+        }
+        if (len > 24) {
+            snprintf(g_status, sizeof(g_status), "Ein Tag ist laenger als 24 Zeichen.");
+            return false;
+        }
+        for (size_t i = 0; i < len; i++) {
+            unsigned char ch = (unsigned char)part[i];
+            if (!(isalnum(ch) || ch == '_' || ch == '-' || ch >= 0x80)) {
+                snprintf(g_status, sizeof(g_status), "Ungueltiges Zeichen in einem Tag.");
+                return false;
+            }
+        }
+
+        bool is_allowed = false;
+        for (int j = 0; j < allowed_count; j++) {
+            if (strcmp(allowed[j], part) == 0) { is_allowed = true; break; }
+        }
+        if (!is_allowed) {
+            snprintf(g_status, sizeof(g_status), "Tag '%s' ist nicht freigegeben.", part);
+            return false;
+        }
+        for (char *p = tags_json; *p; p++) {}
+        char safe_tag[80];
+        json_escape(part, safe_tag, sizeof(safe_tag));
+        size_t used = strlen(tags_json);
+        int written = snprintf(tags_json + used, sizeof(tags_json) - used,
+            "%s\"%s\"", count ? "," : "", safe_tag);
+        if (written < 0 || (size_t)written >= sizeof(tags_json) - used) return false;
+        count++;
+        part = strtok_r(NULL, ",", &save);
+    }
+    strncat(tags_json, "]", sizeof(tags_json) - strlen(tags_json) - 1);
+
+    if (strcmp(user->uid, g_account.uid) == 0 && !strstr(tags_json, "\"admin\"")) {
+        snprintf(g_status, sizeof(g_status), "Du kannst deinen eigenen Admin-Tag nicht entfernen.");
+        return false;
+    }
+
+    char safe_uid[400], payload[2800];
+    json_escape(user->uid, safe_uid, sizeof(safe_uid));
+    snprintf(payload, sizeof(payload), "{\"uid\":\"%s\",\"tags\":%s}", safe_uid, tags_json);
+    HttpResponse response;
+    bool ok = call_function("setTobiTags", payload, &response);
+    if (!ok) snprintf(g_status, sizeof(g_status), "Tags konnten nicht gespeichert werden (HTTP %ld).", response.status);
+    else snprintf(g_status, sizeof(g_status), "Tags fuer %s aktualisiert.", user->displayName);
+    http_response_free(&response);
+    return ok;
+}
+
+static bool toggle_admin_user_disabled(AdminUser *user) {
+    bool next = !user->disabled;
+    char safe_uid[400], payload[700];
+    json_escape(user->uid, safe_uid, sizeof(safe_uid));
+    snprintf(payload, sizeof(payload),
+        "{\"uid\":\"%s\",\"disabled\":%s}", safe_uid, next ? "true" : "false");
+    HttpResponse response;
+    bool ok = call_function("setTobiDisabled", payload, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Kontostatus konnte nicht geaendert werden (HTTP %ld).",
+            response.status);
+    } else {
+        user->disabled = next;
+        snprintf(g_status, sizeof(g_status), "Konto %s.", next ? "gesperrt" : "entsperrt");
+    }
+    http_response_free(&response);
+    return ok;
+}
+
+static void show_admin_users(void) {
+    if (!load_admin_user_list()) return;
+    int selected = 0;
+    while (appletMainLoop()) {
+        draw_admin_users_screen(selected);
+        PadState waitpad;
+        padInitializeDefault(&waitpad);
+        bool redraw = false;
+        while (appletMainLoop()) {
+            padUpdate(&waitpad);
+            u64 pressed = padGetButtonsDown(&waitpad);
+            if (pressed & HidNpadButton_B) goto done;
+            if ((pressed & HidNpadButton_Up) && g_admin_user_count > 0) {
+                selected = (selected + g_admin_user_count - 1) % g_admin_user_count;
+                redraw = true;
+                break;
+            }
+            if ((pressed & HidNpadButton_Down) && g_admin_user_count > 0) {
+                selected = (selected + 1) % g_admin_user_count;
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_Y) {
+                load_admin_user_list();
+                if (g_admin_user_count > 0) selected %= g_admin_user_count;
+                redraw = true;
+                break;
+            }
+            if (g_admin_user_count > 0 && (pressed & HidNpadButton_A)) {
+                toggle_admin_user_disabled(&g_admin_users[selected]);
+                redraw = true;
+                break;
+            }
+            if (g_admin_user_count > 0 && (pressed & HidNpadButton_X)) {
+                edit_admin_user_tags(&g_admin_users[selected]);
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_Plus) goto done;
+            svcSleepThread(16000000ULL);
+        }
+        if (redraw) continue;
+    }
+done:
+    snprintf(g_status, sizeof(g_status), "Accountverwaltung geschlossen.");
+}
+
 /* ------------------------------- Actions ------------------------------ */
 static void shift_week(int direction) {
     g_week_monday.tm_mday += direction * 7;
