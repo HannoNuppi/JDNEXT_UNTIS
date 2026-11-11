@@ -8,6 +8,9 @@
 #include <ctype.h>
 #include <strings.h>
 #include <errno.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <limits.h>
 #include "ui.h"
 
@@ -30,6 +33,11 @@ typedef struct {
     int start, end, size, parent;
     char type;
 } JsonToken;
+
+typedef struct {
+    char filename[121];
+    char *data_url;
+} NativeImage;
 
 typedef struct {
     char *data;
@@ -126,6 +134,7 @@ static AccessControlState g_access_control;
 static int g_access_resource_selection = 0;
 static unsigned long g_write_counter = 0;
 static bool g_socket_initialized = false;
+static bool g_sdmc_initialized = false;
 static bool g_maintenance = false;
 static char g_maintenance_message[500];
 static char g_status[220] = "Bereit.";
@@ -866,8 +875,189 @@ static bool save_classwork_entry(const char *hw_key, const char *title) {
     return ok;
 }
 
+static char *base64_encode_bytes(const unsigned char *data, size_t length) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t out_length = ((length + 2) / 3) * 4;
+    char *out = (char *)malloc(out_length + 1);
+    if (!out) return NULL;
+
+    size_t in = 0, out_pos = 0;
+    while (in < length) {
+        unsigned int a = data[in++];
+        bool has_b = in < length;
+        unsigned int b = has_b ? data[in++] : 0;
+        bool has_c = in < length;
+        unsigned int c = has_c ? data[in++] : 0;
+        unsigned int triple = (a << 16) | (b << 8) | c;
+        out[out_pos++] = alphabet[(triple >> 18) & 0x3F];
+        out[out_pos++] = alphabet[(triple >> 12) & 0x3F];
+        out[out_pos++] = has_b ? alphabet[(triple >> 6) & 0x3F] : '=';
+        out[out_pos++] = has_c ? alphabet[triple & 0x3F] : '=';
+    }
+    out[out_pos] = 0;
+    return out;
+}
+
+static bool load_native_jpeg(const char *path, const char *filename, NativeImage *image) {
+    memset(image, 0, sizeof(*image));
+    struct stat info;
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 4
+        || info.st_size > 580000) {
+        snprintf(g_status, sizeof(g_status),
+            "JPEG muss eine regulaere Datei mit maximal 580 KB sein.");
+        return false;
+    }
+
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        snprintf(g_status, sizeof(g_status), "Datei konnte nicht geoeffnet werden.");
+        return false;
+    }
+    size_t size = (size_t)info.st_size;
+    unsigned char *bytes = (unsigned char *)malloc(size);
+    if (!bytes) {
+        fclose(file);
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer das Bild.");
+        return false;
+    }
+    size_t read_count = fread(bytes, 1, size, file);
+    fclose(file);
+    if (read_count != size || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF) {
+        free(bytes);
+        snprintf(g_status, sizeof(g_status), "Die ausgewaehlte Datei ist kein JPEG-Bild.");
+        return false;
+    }
+
+    char *encoded = base64_encode_bytes(bytes, size);
+    free(bytes);
+    if (!encoded) {
+        snprintf(g_status, sizeof(g_status), "JPEG konnte nicht kodiert werden.");
+        return false;
+    }
+
+    const char prefix[] = "data:image/jpeg;base64,";
+    size_t prefix_len = sizeof(prefix) - 1;
+    size_t encoded_len = strlen(encoded);
+    if (prefix_len + encoded_len > 800000) {
+        free(encoded);
+        snprintf(g_status, sizeof(g_status), "Das kodierte JPEG ueberschreitet 800 KB.");
+        return false;
+    }
+
+    image->data_url = (char *)malloc(prefix_len + encoded_len + 1);
+    if (!image->data_url) {
+        free(encoded);
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer das Bild.");
+        return false;
+    }
+    memcpy(image->data_url, prefix, prefix_len);
+    memcpy(image->data_url + prefix_len, encoded, encoded_len + 1);
+    free(encoded);
+
+    /* Strip path separators and control characters before writing the metadata. */
+    size_t out = 0;
+    for (size_t i = 0; filename[i] && out < sizeof(image->filename) - 1; i++) {
+        unsigned char c = (unsigned char)filename[i];
+        if (c == '/' || c == '\\' || c < 32) continue;
+        image->filename[out++] = (char)c;
+    }
+    image->filename[out] = 0;
+    if (!image->filename[0]) snprintf(image->filename, sizeof(image->filename), "bild.jpg");
+    snprintf(g_status, sizeof(g_status), "JPEG geladen: %s", image->filename);
+    return true;
+}
+
+static bool select_native_homework_image(NativeImage *image) {
+    memset(image, 0, sizeof(*image));
+    if (!g_sdmc_initialized) {
+        snprintf(g_status, sizeof(g_status), "SD-Karte ist nicht verfuegbar; Hausaufgabe wird ohne Bild erstellt.");
+        return false;
+    }
+
+    const char *directory = "sdmc:/switch/UntisNext/uploads";
+    (void)mkdir("sdmc:/switch/UntisNext", 0777);
+    (void)mkdir(directory, 0777);
+
+    char files[64][121];
+    int file_count = 0;
+    DIR *dir = opendir(directory);
+    if (!dir) {
+        snprintf(g_status, sizeof(g_status), "Bildordner konnte nicht geoeffnet werden.");
+        return false;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && file_count < 64) {
+        if (!entry->d_name[0] || entry->d_name[0] == '.') continue;
+        const char *dot = strrchr(entry->d_name, '.');
+        if (!dot || (strcasecmp(dot, ".jpg") != 0 && strcasecmp(dot, ".jpeg") != 0)) continue;
+        snprintf(files[file_count++], sizeof(files[0]), "%s", entry->d_name);
+    }
+    closedir(dir);
+
+    if (file_count == 0) {
+        snprintf(g_status, sizeof(g_status),
+            "Keine JPEGs gefunden. Bilder nach sdmc:/switch/UntisNext/uploads kopieren.");
+        return false;
+    }
+
+    int selected = 0;
+    while (appletMainLoop()) {
+        ui_begin();
+        draw_sidebar("STUNDENPLAN");
+        draw_top_header("BILD AUSWAEHLEN", "JPEG AUS SD-KARTE");
+        ui_card(252, 145, 996, 465, false);
+        ui_text(278, 166, "BILDER IN sdmc:/switch/UntisNext/uploads", 1, UI_CYAN);
+        int start = selected > 10 ? selected - 10 : 0;
+        int end = start + 12;
+        if (end > file_count) end = file_count;
+        for (int i = start; i < end; i++) {
+            int y = 204 + (i - start) * 32;
+            bool active = i == selected;
+            ui_card(278, y, 940, 28, active);
+            ui_text(294, y + 8, files[i], 1, active ? UI_CYAN : UI_TEXT);
+        }
+        ui_text(252, 629, "A AUSWAEHLEN  |  B OHNE BILD FORTFAHREN", 1, UI_MUTED);
+        draw_status_bar();
+        ui_end();
+
+        PadState pad;
+        padInitializeDefault(&pad);
+        bool chosen = false;
+        bool cancelled = false;
+        while (appletMainLoop()) {
+            padUpdate(&pad);
+            u64 pressed = padGetButtonsDown(&pad);
+            if ((pressed & HidNpadButton_Up) && file_count > 0) {
+                selected = (selected + file_count - 1) % file_count;
+                break;
+            }
+            if ((pressed & HidNpadButton_Down) && file_count > 0) {
+                selected = (selected + 1) % file_count;
+                break;
+            }
+            if (pressed & HidNpadButton_A) { chosen = true; break; }
+            if (pressed & HidNpadButton_B) { cancelled = true; break; }
+            if (pressed & HidNpadButton_Plus) { cancelled = true; break; }
+            svcSleepThread(16000000ULL);
+        }
+        if (chosen) {
+            char path[600];
+            snprintf(path, sizeof(path), "%s/%s", directory, files[selected]);
+            if (load_native_jpeg(path, files[selected], image)) return true;
+            return false;
+        }
+        if (cancelled) {
+            snprintf(g_status, sizeof(g_status), "Hausaufgabe wird ohne Bild erstellt.");
+            return false;
+        }
+    }
+    return false;
+}
+
 static bool save_homework_entry(const char *hw_key, const char *text,
-                                const char *author) {
+                                const char *author, const NativeImage *image) {
     const char *clean_text = text ? text : "";
     const char *clean_author = author ? author : "";
     size_t text_len = strlen(clean_text), author_len = strlen(clean_author);
@@ -890,10 +1080,17 @@ static bool save_homework_entry(const char *hw_key, const char *text,
         auth_uid = g_guestTobi.uid;
     }
 
-    char safe_text[2100], safe_author[200], entry_id[128], body[14000];
-    char event_id[256], owner_account_value[220];
+    bool has_image = image && image->data_url && image->data_url[0];
+    if (has_image && strlen(image->data_url) > 800000) {
+        snprintf(g_status, sizeof(g_status), "JPEG ist fuer Firestore zu gross.");
+        return false;
+    }
+
+    char safe_text[2100], safe_author[200], safe_filename[260], entry_id[128];
+    char event_id[256], owner_account_value[220], images_field[700];
     json_escape(clean_text, safe_text, sizeof(safe_text));
     json_escape(clean_author, safe_author, sizeof(safe_author));
+    json_escape(has_image ? image->filename : "", safe_filename, sizeof(safe_filename));
     make_document_id(entry_id, sizeof(entry_id));
     snprintf(event_id, sizeof(event_id), "reward-%s-%s", hw_key, entry_id);
     if (g_account.signedIn) {
@@ -902,17 +1099,53 @@ static bool save_homework_entry(const char *hw_key, const char *text,
     } else {
         snprintf(owner_account_value, sizeof(owner_account_value), "{\"nullValue\":null}");
     }
+    if (has_image) {
+        snprintf(images_field, sizeof(images_field),
+            "{\"arrayValue\":{\"values\":[{\"mapValue\":{\"fields\":{"
+              "\"kind\":{\"stringValue\":\"firestore\"},"
+              "\"imageId\":{\"stringValue\":\"img0\"},"
+              "\"filename\":{\"stringValue\":\"%s\"}"
+            "}}}]}}", safe_filename);
+    } else {
+        snprintf(images_field, sizeof(images_field), "{\"arrayValue\":{}}");
+    }
+
+    size_t image_write_len = has_image ? strlen(image->data_url) + 900 : 0;
+    size_t body_capacity = 18000 + image_write_len;
+    char *body = (char *)malloc(body_capacity);
+    if (!body) {
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer den Firestore-Upload.");
+        return false;
+    }
+
+    char image_write[1280];
+    image_write[0] = 0;
+    if (has_image) {
+        char image_path[500];
+        snprintf(image_path, sizeof(image_path),
+            "projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s/images/img0",
+            TOBI_PROJECT, hw_key, entry_id);
+        snprintf(image_write, sizeof(image_write),
+            ",{\"update\":{\"name\":\"%s\",\"fields\":{"
+              "\"filename\":{\"stringValue\":\"%s\"},"
+              "\"dataUrl\":{\"stringValue\":\"%s\"}"
+            "}},"
+            "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+              "\"setToServerValue\":\"REQUEST_TIME\"}],"
+            "\"currentDocument\":{\"exists\":false}}",
+            image_path, safe_filename, image->data_url);
+    }
 
     int needed;
     if (reward) {
-        needed = snprintf(body, sizeof(body),
+        needed = snprintf(body, body_capacity,
           "{\"writes\":["
             "{\"update\":{"
               "\"name\":\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\","
               "\"fields\":{"
                 "\"text\":{\"stringValue\":\"%s\"},"
                 "\"author\":{\"stringValue\":\"%s\"},"
-                "\"images\":{\"arrayValue\":{}},"
+                "\"images\":%s,"
                 "\"reportCount\":{\"integerValue\":\"0\"}"
               "}"
             "},"
@@ -925,13 +1158,14 @@ static bool save_homework_entry(const char *hw_key, const char *text,
               "\"fields\":{"
                 "\"authorAuthUid\":{\"stringValue\":\"%s\"},"
                 "\"authorTobiUid\":{\"stringValue\":\"%s\"},"
-                "\"authorTobiAccountUid\":{\"stringValue\":\"%s\"}"
+                "\"authorTobiAccountUid\":%s"
               "}"
             "},"
             "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
               "\"setToServerValue\":\"REQUEST_TIME\"}],"
             "\"currentDocument\":{\"exists\":false}"
-            "},"
+            "}"
+            "%s,"
             "{\"update\":{"
               "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
               "\"fields\":{\"lastJdnextCoinEventId\":{\"stringValue\":\"%s\"}}"
@@ -958,19 +1192,20 @@ static bool save_homework_entry(const char *hw_key, const char *text,
             "\"currentDocument\":{\"exists\":false}"
           "}"
           "]}",
-          TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author,
-          TOBI_PROJECT, hw_key, entry_id, auth_uid, auth_uid, auth_uid,
+          TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author, images_field,
+          TOBI_PROJECT, hw_key, entry_id, auth_uid, auth_uid, owner_account_value,
+          image_write,
           TOBI_PROJECT, auth_uid, event_id,
           TOBI_PROJECT, event_id, auth_uid, hw_key, entry_id);
     } else {
-        needed = snprintf(body, sizeof(body),
+        needed = snprintf(body, body_capacity,
           "{\"writes\":["
             "{\"update\":{"
               "\"name\":\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\","
               "\"fields\":{"
                 "\"text\":{\"stringValue\":\"%s\"},"
                 "\"author\":{\"stringValue\":\"%s\"},"
-                "\"images\":{\"arrayValue\":{}},"
+                "\"images\":%s,"
                 "\"reportCount\":{\"integerValue\":\"0\"}"
               "}"
             "},"
@@ -989,19 +1224,23 @@ static bool save_homework_entry(const char *hw_key, const char *text,
             "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
               "\"setToServerValue\":\"REQUEST_TIME\"}],"
             "\"currentDocument\":{\"exists\":false}"
-          "}"
+            "}"
+            "%s"
           "]}",
-          TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author,
-          TOBI_PROJECT, hw_key, entry_id, auth_uid, owner_account_value);
+          TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author, images_field,
+          TOBI_PROJECT, hw_key, entry_id, auth_uid, owner_account_value,
+          image_write);
     }
 
-    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+    if (needed < 0 || (size_t)needed >= body_capacity) {
+        free(body);
         snprintf(g_status, sizeof(g_status), "Hausaufgabe konnte nicht vorbereitet werden (zu gross).");
         return false;
     }
 
     HttpResponse response;
     bool ok = firestore_commit(TOBI_PROJECT, body, token, &response);
+    free(body);
     if (!ok) {
         snprintf(g_status, sizeof(g_status), "Hausaufgabe abgelehnt (HTTP %ld).", response.status);
         if (response.data && strstr(response.data, "message")) {
@@ -1010,8 +1249,8 @@ static bool save_homework_entry(const char *hw_key, const char *text,
         }
     } else {
         snprintf(g_status, sizeof(g_status), reward
-            ? "Gespeichert: +10 Goldmuenzen."
-            : "Hausaufgabe gespeichert und live geteilt.");
+            ? (has_image ? "Gespeichert: Bild angehaengt, +10 Goldmuenzen." : "Gespeichert: +10 Goldmuenzen.")
+            : (has_image ? "Hausaufgabe mit Bild live geteilt." : "Hausaufgabe live geteilt."));
     }
     http_response_free(&response);
     return ok;
@@ -3085,6 +3324,8 @@ int main(int argc, char *argv[]) {
     if (!ui_init()) {
         snprintf(g_status, sizeof(g_status), "Native libnx-Oberflaeche konnte nicht gestartet werden.");
     }
+    Result mount_rc = fsdevMountSdmc();
+    g_sdmc_initialized = R_SUCCEEDED(mount_rc);
     Result socket_rc = socketInitializeDefault();
     g_socket_initialized = R_SUCCEEDED(socket_rc);
     if (!g_socket_initialized) {
@@ -3161,10 +3402,14 @@ int main(int argc, char *argv[]) {
                     char key[64];
                     date_key_for_lesson(g_day, g_period, key, sizeof(key));
                     draw_loading("Speichere Hausaufgabe ...");
-                    if (save_homework_entry(key, text, author)) {
+                    NativeImage image = {0};
+                    (void)select_native_homework_image(&image);
+                    if (save_homework_entry(key, text, author,
+                            image.data_url ? &image : NULL)) {
                         load_lesson_entries();
                         g_menu_selection = 0;
                     }
+                    free(image.data_url);
                 } else {
                     snprintf(g_status, sizeof(g_status), "Erstellen abgebrochen.");
                 }
@@ -3327,5 +3572,6 @@ int main(int argc, char *argv[]) {
     curl_global_cleanup();
     ui_shutdown();
     if (g_socket_initialized) socketExit();
+    if (g_sdmc_initialized) fsdevUnmountDevice("sdmc");
     return 0;
 }
