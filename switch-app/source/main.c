@@ -1326,14 +1326,13 @@ int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
-    consoleInit(NULL);
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
     padInitializeDefault(&pad);
 
     initialize_week();
     if (!ui_init()) {
-        snprintf(g_status, sizeof(g_status), "SDL2-Oberflaeche konnte nicht gestartet werden.");
+        snprintf(g_status, sizeof(g_status), "Native libnx-Oberflaeche konnte nicht gestartet werden.");
     }
     Result socket_rc = socketInitializeDefault();
     g_socket_initialized = R_SUCCEEDED(socket_rc);
@@ -1497,6 +1496,5 @@ int main(int argc, char *argv[]) {
     curl_global_cleanup();
     ui_shutdown();
     if (g_socket_initialized) socketExit();
-    consoleExit(NULL);
     return 0;
 }
