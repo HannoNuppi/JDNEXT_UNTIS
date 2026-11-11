@@ -1571,40 +1571,6 @@ static bool open_advent_door_native(int day) {
     return ok;
 }
 
-static void draw_advent_calendar(void) {
-    ui_begin();
-    draw_sidebar("KONTO");
-    int year, month, today;
-    berlin_date(&year, &month, &today);
-    char subtitle[120];
-    snprintf(subtitle, sizeof(subtitle), "DEZEMBER %d  |  %d/24 TUEREN GEOEFFNET",
-        year, g_account.adventYear == year ? g_account.adventDoorCount : 0);
-    draw_top_header("ADVENTSKALENDER", subtitle);
-
-    for (int door = 1; door <= 24; door++) {
-        int row = (door - 1) / 6;
-        int column = (door - 1) % 6;
-        int x = 252 + column * 166;
-        int y = 154 + row * 112;
-        bool open = advent_door_is_open(year, door);
-        bool selected = g_advent_selection == door - 1;
-        bool is_today = month == 12 && today == door;
-        ui_card(x, y, 150, 94, selected);
-        ui_badge(x + 10, y + 10, 130,
-            open ? "GEOEFFNET" : (is_today ? "HEUTE" : "GESCHLOSSEN"),
-            open ? UI_GREEN : (is_today ? UI_CYAN : UI_SURFACE_2),
-            open || is_today ? UI_BG : UI_MUTED);
-        char day_text[12];
-        snprintf(day_text, sizeof(day_text), "%02d", door);
-        ui_text_center(x + 10, y + 51, 130, day_text, 3,
-            open ? UI_GREEN : (is_today ? UI_CYAN : UI_TEXT));
-    }
-    ui_text(252, 629, "A HEUTIGE TUER OEFFNEN  |  Y AKTUALISIEREN  |  B ZURUECK",
-            1, UI_MUTED);
-    draw_status_bar();
-    ui_end();
-}
-
 static bool save_profile_cosmetics_native(void) {
     if (!g_account.signedIn || g_account.disabled) {
         snprintf(g_status, sizeof(g_status), "Zum Bearbeiten brauchst du ein aktives Konto.");
