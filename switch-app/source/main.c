@@ -86,6 +86,14 @@ typedef struct {
     bool disabled;
 } AdminUser;
 
+typedef struct {
+    char uid[160];
+    char displayName[64];
+    char profileTitle[64];
+    char profileIcon[32];
+    long long goldCoins;
+} LeaderEntry;
+
 typedef enum {
     SCREEN_TIMETABLE = 0,
     SCREEN_LESSON,
@@ -100,6 +108,8 @@ static GuestSession g_guestTobi;
 static GuestSession g_guestOld;
 static AdminUser g_admin_users[24];
 static int g_admin_user_count = 0;
+static LeaderEntry g_leaderboard[30];
+static int g_leaderboard_count = 0;
 static unsigned long g_write_counter = 0;
 static bool g_socket_initialized = false;
 static bool g_maintenance = false;
@@ -1737,6 +1747,7 @@ static void draw_admin(void) {
         "WARTUNGSMODUS UMSCHALTEN",
         "ACCOUNTLISTE UND VERWALTUNG",
         "UNTIS NEXT LIVE FREIGEBEN",
+        "GOLD-RANGLISTE",
         "ZURUECK ZUM KONTO"
     };
     const char *descriptions[] = {
@@ -1744,15 +1755,16 @@ static void draw_admin(void) {
         "Schaltet den Wartungshinweis fuer Untis Next.",
         "Accounts, Tags, Sperren, Muenzen und Event-Themes verwalten.",
         "Gibt die aktuelle Test-Version fuer die Live-Website frei.",
+        "Zeigt die Gold-Rangliste der TobiServices-Profile.",
         "Zurueck zu deinen Kontoinformationen."
     };
-    for (int i = 0; i < 5; i++) {
-        int y = 282 + i * 68;
+    for (int i = 0; i < 6; i++) {
+        int y = 276 + i * 58;
         bool selected = g_menu_selection == i;
-        ui_card(252, y, 996, 58, selected);
-        ui_text(278, y + 10, items[i], 1, selected ? UI_CYAN : UI_TEXT);
-        ui_text(278, y + 34, descriptions[i], 1, UI_MUTED);
-        ui_text(1194, y + 19, ">", 2, selected ? UI_CYAN : UI_MUTED);
+        ui_card(252, y, 996, 50, selected);
+        ui_text(278, y + 8, items[i], 1, selected ? UI_CYAN : UI_TEXT);
+        ui_text(278, y + 30, descriptions[i], 1, UI_MUTED);
+        ui_text(1194, y + 15, ">", 2, selected ? UI_CYAN : UI_MUTED);
     }
     ui_text(252, 629, "NUR AKTIVE ADMINS  |  JEDE AENDERUNG WIRD SERVERSEITIG GEPRUEFT",
             1, UI_MUTED);
@@ -2315,6 +2327,117 @@ static bool admin_toggle_event_theme(AdminUser *user) {
     return ok;
 }
 
+static int compare_leader_entries(const void *left, const void *right) {
+    const LeaderEntry *a = (const LeaderEntry *)left;
+    const LeaderEntry *b = (const LeaderEntry *)right;
+    if (a->goldCoins < b->goldCoins) return 1;
+    if (a->goldCoins > b->goldCoins) return -1;
+    return strcasecmp(a->displayName, b->displayName);
+}
+
+static bool load_native_leaderboard(void) {
+    HttpResponse response;
+    if (!firestore_list(TOBI_PROJECT, "publicProfiles", g_account.idToken, &response)) {
+        snprintf(g_status, sizeof(g_status), "Gold-Rangliste nicht verfuegbar (HTTP %ld).",
+            response.status);
+        http_response_free(&response);
+        return false;
+    }
+
+    JsonToken *tokens = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!tokens) {
+        http_response_free(&response);
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer die Rangliste.");
+        return false;
+    }
+
+    int count = 0;
+    int root = json_parse(response.data, tokens, &count);
+    int docs = root >= 0 ? json_object_get(response.data, tokens, count, root, "documents") : -1;
+    g_leaderboard_count = 0;
+    for (int i = 0; i < 30; i++) {
+        int doc = json_array_get(tokens, count, docs, i);
+        if (doc < 0) break;
+        LeaderEntry *entry = &g_leaderboard[g_leaderboard_count++];
+        memset(entry, 0, sizeof(*entry));
+        char full_name[400] = "";
+        json_get_string(response.data, tokens, count, doc, "name",
+                        full_name, sizeof(full_name));
+        const char *last = strrchr(full_name, '/');
+        if (last) snprintf(entry->uid, sizeof(entry->uid), "%s", last + 1);
+        int fields = json_object_get(response.data, tokens, count, doc, "fields");
+        firestore_field_string(response.data, tokens, count, fields,
+            "displayName", entry->displayName, sizeof(entry->displayName));
+        firestore_field_string(response.data, tokens, count, fields,
+            "profileTitle", entry->profileTitle, sizeof(entry->profileTitle));
+        firestore_field_string(response.data, tokens, count, fields,
+            "profileIcon", entry->profileIcon, sizeof(entry->profileIcon));
+        entry->goldCoins = firestore_field_int(response.data, tokens, count, fields, "goldCoins");
+    }
+
+    free(tokens);
+    http_response_free(&response);
+    qsort(g_leaderboard, (size_t)g_leaderboard_count, sizeof(g_leaderboard[0]),
+          compare_leader_entries);
+    return true;
+}
+
+static void show_admin_leaderboard(void) {
+    if (!g_account.signedIn || g_account.disabled || !g_account.isAdmin) {
+        snprintf(g_status, sizeof(g_status), "Die Gold-Rangliste ist nur fuer aktive Admins.");
+        return;
+    }
+    if (!load_native_leaderboard()) return;
+
+    while (appletMainLoop()) {
+        ui_begin();
+        draw_sidebar("ADMIN");
+        draw_top_header("GOLD-RANGLISTE", "TOBISERVICES-OEFFENTLICHE PROFILE");
+        for (int i = 0; i < g_leaderboard_count; i++) {
+            int column = i / 15;
+            int row = i % 15;
+            int x = 252 + column * 500;
+            int y = 140 + row * 32;
+            char rank[12], coins[32];
+            snprintf(rank, sizeof(rank), "%d.", i + 1);
+            snprintf(coins, sizeof(coins), "%lld", g_leaderboard[i].goldCoins);
+            ui_card(x, y, 478, 28, false);
+            ui_text(x + 10, y + 8, rank, 1, i < 3 ? UI_YELLOW : UI_MUTED);
+            ui_text(x + 43, y + 8, g_leaderboard[i].profileIcon,
+                    1, UI_CYAN);
+            ui_text(x + 76, y + 8, g_leaderboard[i].displayName,
+                    1, UI_TEXT);
+            ui_text(x + 310, y + 8, g_leaderboard[i].profileTitle,
+                    1, UI_PURPLE);
+            ui_text(x + 425, y + 8, coins, 1, UI_YELLOW);
+        }
+        if (!g_leaderboard_count) {
+            ui_text(278, 170, "NOCH KEINE OEFFENTLICHEN PROFILE", 1, UI_MUTED);
+        }
+        ui_text(252, 629, "Y AKTUALISIEREN  |  B ZURUECK", 1, UI_MUTED);
+        draw_status_bar();
+        ui_end();
+
+        PadState waitpad;
+        padInitializeDefault(&waitpad);
+        bool redraw = false;
+        while (appletMainLoop()) {
+            padUpdate(&waitpad);
+            u64 pressed = padGetButtonsDown(&waitpad);
+            if (pressed & HidNpadButton_B) return;
+            if (pressed & HidNpadButton_Y) {
+                draw_loading("Lade Gold-Rangliste ...");
+                load_native_leaderboard();
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_Plus) return;
+            svcSleepThread(16000000ULL);
+        }
+        if (!redraw) break;
+    }
+}
+
 static void show_admin_users(void) {
     if (!load_admin_user_list()) return;
     int selected = 0;
@@ -2620,8 +2743,8 @@ int main(int argc, char *argv[]) {
             }
             draw_profile();
         } else if (g_screen == SCREEN_ADMIN) {
-            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 4) % 5;
-            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 5;
+            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 5) % 6;
+            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 6;
             if (down & HidNpadButton_B) g_screen = SCREEN_ACCOUNT;
             if (down & HidNpadButton_A) {
                 if (!g_account.isAdmin || g_account.disabled) {
@@ -2631,6 +2754,7 @@ int main(int argc, char *argv[]) {
                 else if (g_menu_selection == 1) toggle_maintenance();
                 else if (g_menu_selection == 2) show_admin_users();
                 else if (g_menu_selection == 3) request_live_publish_native();
+                else if (g_menu_selection == 4) show_admin_leaderboard();
                 else g_screen = SCREEN_ACCOUNT;
             }
             draw_admin();
