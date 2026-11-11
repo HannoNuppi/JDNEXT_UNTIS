@@ -48,7 +48,7 @@ typedef struct {
     char equippedTheme[64];
     char profileTitle[64];
     char profileIcon[32];
-    int goldCoins;
+    long long goldCoins;
     bool disabled;
     bool signedIn;
     bool isAdmin;
@@ -82,7 +82,7 @@ typedef struct {
     char displayName[96];
     char email[160];
     char tags[512];
-    int goldCoins;
+    long long goldCoins;
     bool disabled;
 } AdminUser;
 
@@ -352,7 +352,7 @@ static bool firestore_field_bool(const char *s, JsonToken *t, int n, int fields,
            strncmp(s + t[value].start, "true", 4) == 0;
 }
 
-static int firestore_field_int(const char *s, JsonToken *t, int n, int fields, const char *field) {
+static long long firestore_field_int(const char *s, JsonToken *t, int n, int fields, const char *field) {
     int wrapper = json_object_get(s, t, n, fields, field);
     int value = json_object_get(s, t, n, wrapper, "integerValue");
     if (value < 0) return 0;
@@ -361,7 +361,10 @@ static int firestore_field_int(const char *s, JsonToken *t, int n, int fields, c
     if (!len || len >= sizeof(tmp)) return 0;
     memcpy(tmp, s + t[value].start, len);
     tmp[len] = 0;
-    return atoi(tmp);
+    char *end = NULL;
+    errno = 0;
+    long long result = strtoll(tmp, &end, 10);
+    return (errno == ERANGE || end == tmp || (end && *end)) ? 0 : result;
 }
 
 static void firestore_field_string_array(const char *s, JsonToken *t, int n,
@@ -1187,13 +1190,13 @@ static bool purchase_theme_native(const ThemeOption *theme) {
     }
     snprintf(event_id, sizeof(event_id), "theme-%s-%s", g_account.uid, theme->id);
 
-    int next_coins = g_account.goldCoins - theme->price;
+    long long next_coins = g_account.goldCoins - theme->price;
     int needed = snprintf(body, sizeof(body),
         "{\"writes\":["
           "{\"update\":{"
             "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
             "\"fields\":{"
-              "\"goldCoins\":{\"integerValue\":\"%d\"},"
+              "\"goldCoins\":{\"integerValue\":\"%lld\"},"
               "\"ownedThemes\":%s,"
               "\"lastJdnextCoinEventId\":{\"stringValue\":\"%s\"}"
             "}"
@@ -1463,7 +1466,7 @@ static void draw_account(void) {
         ui_separator(278, 302, 410, UI_BORDER);
         ui_text(278, 330, "GOLDMUENZEN", 1, UI_MUTED);
         char coins[32];
-        snprintf(coins, sizeof(coins), "%d", g_account.goldCoins);
+        snprintf(coins, sizeof(coins), "%lld", g_account.goldCoins);
         ui_text(278, 358, coins, 3, UI_YELLOW);
         ui_text(278, 426, "AUSGERUESTET", 1, UI_MUTED);
         ui_text(278, 452, g_account.equippedTheme[0] ? g_account.equippedTheme : "Next", 1, UI_CYAN);
@@ -1515,7 +1518,7 @@ static void draw_themes(void) {
     ui_begin();
     draw_sidebar("KONTO");
     char coin_text[80];
-    snprintf(coin_text, sizeof(coin_text), "%d GOLDMUENZEN", g_account.signedIn ? g_account.goldCoins : 0);
+    snprintf(coin_text, sizeof(coin_text), "%lld GOLDMUENZEN", g_account.signedIn ? g_account.goldCoins : 0LL);
     draw_top_header("THEMES", coin_text);
     int count = visible_theme_count();
     for (int i = 0; i < count; i++) {
@@ -1756,7 +1759,7 @@ static bool load_admin_user_list(void) {
             if (len > 0 && len < sizeof(number)) {
                 memcpy(number, r.data + t[coins].start, len);
                 number[len] = 0;
-                user->goldCoins = atoi(number);
+                user->goldCoins = strtoll(number, NULL, 10);
             }
         }
         user->disabled = parse_plain_bool(r.data, t, n, item, "disabled");
@@ -1793,7 +1796,7 @@ static void draw_admin_users_screen(int selected) {
             ? g_admin_users[i].displayName : "(OHNE NAMEN)", 1, active ? UI_CYAN : UI_TEXT);
         ui_text(x + 206, y + 7, g_admin_users[i].email, 1, UI_MUTED);
         char coins[24];
-        snprintf(coins, sizeof(coins), "%d", g_admin_users[i].goldCoins);
+        snprintf(coins, sizeof(coins), "%lld", g_admin_users[i].goldCoins);
         ui_text(x + 340, y + 7, coins, 1, UI_YELLOW);
         ui_badge(x + 388, y + 4, 80,
             g_admin_users[i].disabled ? "GESPERRT" : "AKTIV",
@@ -2006,7 +2009,7 @@ static bool admin_set_user_coins(AdminUser *user) {
         snprintf(g_status, sizeof(g_status),
             "Muenzen konnten nicht gespeichert werden (HTTP %ld).", response.status);
     } else {
-        user->goldCoins = (int)value;
+        user->goldCoins = value;
         if (value <= -50) user->disabled = true;
         snprintf(g_status, sizeof(g_status), "Neuer Kontostand: %lld Goldmuenzen.", value);
     }
