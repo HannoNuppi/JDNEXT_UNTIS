@@ -1838,7 +1838,6 @@ static bool edit_admin_user_tags(AdminUser *user) {
             snprintf(g_status, sizeof(g_status), "Tag '%s' ist nicht freigegeben.", part);
             return false;
         }
-        for (char *p = tags_json; *p; p++) {}
         char safe_tag[80];
         json_escape(part, safe_tag, sizeof(safe_tag));
         size_t used = strlen(tags_json);
@@ -1919,7 +1918,10 @@ static void show_admin_users(void) {
                 break;
             }
             if (g_admin_user_count > 0 && (pressed & HidNpadButton_X)) {
-                edit_admin_user_tags(&g_admin_users[selected]);
+                if (edit_admin_user_tags(&g_admin_users[selected])) {
+                    load_admin_user_list();
+                    if (g_admin_user_count > 0) selected %= g_admin_user_count;
+                }
                 redraw = true;
                 break;
             }
