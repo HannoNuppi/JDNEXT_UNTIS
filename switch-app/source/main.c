@@ -1433,7 +1433,7 @@ static bool purchase_theme_native(const ThemeOption *theme) {
         snprintf(g_status, sizeof(g_status), "Theme-Kauf abgelehnt (HTTP %ld).", response.status);
     } else {
         refresh_profile();
-        snprintf(g_status, sizeof(g_status), "%s gekauft. Neues Guthaben: %d.",
+        snprintf(g_status, sizeof(g_status), "%s gekauft. Neues Guthaben: %lld.",
             theme->name, g_account.goldCoins);
     }
     http_response_free(&response);
