@@ -1866,28 +1866,80 @@ int main(int argc, char *argv[]) {
             }
             draw_lesson();
         } else if (g_screen == SCREEN_ACCOUNT) {
-            int max_items = g_account.signedIn ? 3 : 2;
+            int max_items = !g_account.signedIn ? 3 : (g_account.isAdmin ? 4 : 3);
             if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + max_items - 1) % max_items;
             if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % max_items;
             if (down & HidNpadButton_B) g_screen = SCREEN_TIMETABLE;
             if (down & HidNpadButton_A) {
                 if (!g_account.signedIn) {
-                    if (g_menu_selection == 0) do_login();
-                    else g_screen = SCREEN_TIMETABLE;
-                } else {
                     if (g_menu_selection == 0) {
-                        if (g_account.isAdmin) {
-                            load_maintenance();
-                            g_screen = SCREEN_ADMIN;
-                            g_menu_selection = 0;
-                        } else snprintf(g_status, sizeof(g_status), "Admin-Rechte sind fuer dieses Konto nicht aktiv.");
-                    } else if (g_menu_selection == 1) {
-                        logout_account();
+                        g_screen = SCREEN_THEMES;
                         g_menu_selection = 0;
-                    } else g_screen = SCREEN_TIMETABLE;
+                    } else if (g_menu_selection == 1) {
+                        do_login();
+                    } else {
+                        g_screen = SCREEN_TIMETABLE;
+                    }
+                } else if (g_menu_selection == 0) {
+                    g_screen = SCREEN_THEMES;
+                    g_menu_selection = 0;
+                } else if (g_account.isAdmin && g_menu_selection == 1) {
+                    load_maintenance();
+                    g_screen = SCREEN_ADMIN;
+                    g_menu_selection = 0;
+                } else if ((g_account.isAdmin && g_menu_selection == 2)
+                           || (!g_account.isAdmin && g_menu_selection == 1)) {
+                    logout_account();
+                    ui_set_theme("Next");
+                    g_menu_selection = 0;
+                } else {
+                    g_screen = SCREEN_TIMETABLE;
                 }
             }
             draw_account();
+        } else if (g_screen == SCREEN_THEMES) {
+            int count = visible_theme_count();
+            if (down & HidNpadButton_Up && count > 0)
+                g_menu_selection = (g_menu_selection + count - 1) % count;
+            if (down & HidNpadButton_Down && count > 0)
+                g_menu_selection = (g_menu_selection + 1) % count;
+            if (down & HidNpadButton_B) g_screen = SCREEN_ACCOUNT;
+            if (down & HidNpadButton_X) {
+                if (g_account.signedIn) {
+                    g_profile_title_selection = profile_title_index();
+                    g_profile_icon_selection = profile_icon_index();
+                    g_screen = SCREEN_PROFILE;
+                } else {
+                    snprintf(g_status, sizeof(g_status), "Melde dich an, um dein Profil anzupassen.");
+                }
+            }
+            if (down & HidNpadButton_A && count > 0) {
+                const ThemeOption *theme = visible_theme_at(g_menu_selection);
+                if (theme) {
+                    if (theme->price > 0 && !account_owns_theme(theme->id)) {
+                        draw_loading("Pruefe Guthaben und kaufe Theme ...");
+                        purchase_theme_native(theme);
+                    } else {
+                        equip_theme_native(theme);
+                    }
+                }
+            }
+            draw_themes();
+        } else if (g_screen == SCREEN_PROFILE) {
+            if (down & HidNpadButton_Up)
+                g_profile_title_selection = (g_profile_title_selection + 6) % 7;
+            if (down & HidNpadButton_Down)
+                g_profile_title_selection = (g_profile_title_selection + 1) % 7;
+            if (down & HidNpadButton_Left)
+                g_profile_icon_selection = (g_profile_icon_selection + 13) % 14;
+            if (down & HidNpadButton_Right)
+                g_profile_icon_selection = (g_profile_icon_selection + 1) % 14;
+            if (down & HidNpadButton_B) g_screen = SCREEN_THEMES;
+            if (down & HidNpadButton_A) {
+                draw_loading("Speichere Profil-Design ...");
+                save_profile_cosmetics_native();
+            }
+            draw_profile();
         } else if (g_screen == SCREEN_ADMIN) {
             if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 3) % 4;
             if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 4;
