@@ -158,6 +158,9 @@ static bool keyboard_input(const char *header, const char *guide, bool password,
 static void draw_loading(const char *message);
 static bool firestore_commit(const char *project, const char *body,
                              const char *token, HttpResponse *out);
+static void draw_sidebar(const char *active);
+static void draw_top_header(const char *title, const char *subtitle);
+static void draw_status_bar(void);
 
 static const char *DAY_NAMES[5] = {
     "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"
