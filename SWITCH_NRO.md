@@ -1,82 +1,149 @@
 # Untis Next Native Switch Port
 
 The NRO is a native Nintendo Switch homebrew application written in C with
-libnx. It does **not** open a browser, WebKit, or a website applet.
+libnx. It does **not** open a browser, WebKit, SDL, or a website applet.
 
 ## Native implementation
 
-- libnx handles the application lifecycle, controller input and Switch software keyboard.
-- switch-curl sends HTTPS requests using libnx's native TLS backend. Certificate
-  verification remains enabled.
-- The timetable is drawn directly into the libnx native 1280x720 framebuffer; it does not use WebKit or SDL.
-- The timetable and lesson screens use the same A/B cycle and Firestore date keys as Untis Next.
-- Lesson details read shared homework, legacy homework and classwork from the existing Firestore projects through the Firestore REST API.
-- New homework entries are written atomically to TobiServices Firestore, including the private author map and the existing +10 Goldmünzen reward when the signed-in account qualifies.
-- New classwork entries are written to the legacy Untis Firestore project with an anonymous Firebase identity, matching the website's public posting rules.
-- Homework reports use the protected reportJdnextHomeworkEntryNative callable. The second report removes the entry and private map and applies the existing -20 Goldmünzen penalty when the author earned a posting reward.
-- TobiServices sign-in uses Firebase Authentication REST. The password is
-  sent only for the sign-in request, cleared from memory afterwards, and is
-  never written to the SD card by this version.
-- The signed-in user's profile is read from Firestore. Admin status is derived
-  from the server profile's active `admin` tag.
-- Admin actions call the existing protected Firebase callable functions:
-  `requestSwitchNroBuild`, `setMaintenanceMode`, and `listTobiUsers`.
-  Those functions perform their own server-side permission checks.
-- No GitHub token, service-account key, or admin secret is embedded in the NRO.
+- libnx manages the application lifecycle, controller input, system keyboard,
+  SD-card access, HTTPS services and a 1280x720 native framebuffer.
+- The dashboard, timetable, lesson details, account, theme shop, Advent
+  calendar and admin tools are drawn directly by the native framebuffer UI.
+- HTTPS requests use switch-curl with libnx TLS and certificate verification.
+- The timetable uses the current A/B cycle and date keys from Untis Next.
+  The schedule is compiled into the client and must be updated in
+  `switch-app/source/main.c` when the school timetable changes.
+- Homework and classwork are loaded from their existing Firestore projects.
+  New homework and classwork are posted through Firestore REST, respecting the
+  current Firestore Rules and server timestamps.
+- Homework can include one JPEG attachment selected from
+  `sdmc:/switch/UntisNext/uploads/`. Use a JPEG smaller than 580 KB. The native
+  client writes the image as a Firestore image subdocument and the public entry
+  stores the same image metadata as the website.
+- Homework reports use the protected
+  `reportJdnextHomeworkEntryNative` callable. The second report removes the
+  entry, its private author mapping and attached image, and applies the existing
+  -20 Goldmünzen penalty when the author received the posting reward.
+- TobiServices supports native email/password sign-in and account creation.
+  Passwords are only sent to Firebase Authentication for the request and are
+  cleared from the temporary buffers; they are not written to the SD card.
+- The profile screen reads and saves profile title, profile icon, theme
+  ownership, equipped theme and Goldmünzen.
+- The native theme shop uses the website's existing prices and Firestore
+  purchase rules. Admin Matrix is a local palette enabled by the active admin
+  tag; event themes appear when the account owns them.
+- The Advent calendar shows all 24 doors. The client only attempts to open the
+  current Berlin-calendar day; Firestore Rules validate the year, day and
+  rewards against server time and grant WinterEvent / WinterGoldEvent where
+  eligible.
+- The admin interface can start an NRO build, toggle maintenance, inspect
+  accounts, edit tags, disable/enable accounts, set Goldmünzen, grant/revoke
+  event themes, view the Gold leaderboard, edit resource access tags, and
+  request a live publication.
+- Admin writes use the signed-in Firebase account and are checked by existing
+  Firestore Rules or protected callable Cloud Functions. No GitHub token,
+  service-account key or admin secret is embedded in the NRO.
 
 ## Controls
 
 ### Timetable
+
 - D-pad Left/Right: choose weekday
 - D-pad Up/Down: choose lesson period
 - L/R: previous/next week
-- A: open homework and classwork for the selected lesson
-- X: account screen
+- A: open the selected lesson
+- X: account
 - Y: refresh maintenance status
 - Plus: exit
 
 ### Lesson details
-- B: back to timetable
-- Y: refresh entries
 
-### Account
-- A: sign in / open native admin area / sign out
-- D-pad Up/Down: choose action
+- D-pad Up/Down: select an entry
+- A: create a homework entry (the SD JPEG picker is optional; press B to skip)
+- X: create a classwork entry
+- R: report the selected new homework entry
+- Y: refresh entries
+- B: back to timetable
+
+### Account, themes and profile
+
+- D-pad Up/Down: move through account actions or themes
+- A: confirm, equip or buy
+- X on the theme screen: open profile design
+- Profile design: Up/Down selects title; Left/Right selects icon; A saves
+- Guest accounts can browse themes and create/sign into a TobiServices account
+- Signed-in accounts can open the Advent calendar
+
+### Advent calendar
+
+- D-pad: choose one of the 24 doors
+- A: attempt to open the selected door (only today's door is accepted)
+- Y: refresh profile and door state
 - B: back
 
 ### Native admin area
+
 - Start a new Switch NRO build
-- Toggle the Untis Next maintenance mode and set its visitor message
-- View the first 24 accounts from the admin account list
-- Every operation is checked again by the Cloud Function
+- Toggle Untis Next maintenance mode and set its visitor message
+- Open the account manager:
+  - A: enable/disable the selected account
+  - X: edit the selected account's tags
+  - L: edit the selected account's Goldmünzen balance
+  - R: grant/revoke an event theme using `+WinterGoldEvent` or `-WinterGoldEvent`
+  - Y: refresh the account list
+- Open the Gold leaderboard
+- Open the access manager:
+  - Up/Down: choose a resource
+  - A: edit its allowed tags (empty means public)
+  - X: edit the allowed tag catalog (the admin tag must remain)
+  - Y: save changes
+- Request a live publication with an optional note
+- Every privileged operation is guarded by the current account and the existing
+  Firestore Rules / Cloud Functions.
 
 ## Current feature boundary
 
-The native port now includes the timetable, lesson detail screens, native homework and classwork creation, homework reporting, TobiServices sign-in, the account screen, and the first admin tools. It is not yet a complete 1:1 port of every website feature.
+This is now a substantial native port, but it is not yet a perfect 1:1 copy of
+every website feature.
 
-Still outstanding are homework image uploads and image viewing, a full profile/theme shop and profile customization, leaderboard, Advent/event screens, complete admin account/tag/permission/coin management, and the Test Mode/live publisher. The native schedule is currently compiled into the client and must be updated in source when the timetable changes. No WebKit fallback is used.
+Still outstanding:
+
+- Native JPEG image preview/viewing inside a homework detail.
+- Selecting and attaching more than one image to a homework entry (the web
+  version supports up to three; the Switch version currently attaches one).
+- Full Test Mode mirror editing and the complete pre-publication review flow.
+- Editing the timetable itself from the Switch (the current schedule is
+  compiled into the NRO).
+- Some smaller web-only account, cosmetic and moderation details.
+
+No WebKit fallback is used.
 
 ## Build
 
-GitHub Actions installs the Switch curl portlib and compiles with the official
-devkitPro Switch development container. A successful main-branch build uploads
-the NRO as an artifact and updates the prerelease:
+GitHub Actions installs the host tools, builds the Switch curl portlib, compiles
+the native libnx application and publishes the NRO as an artifact and prerelease:
 
 https://github.com/HannoNuppi/JDNEXT_UNTIS/releases/tag/switch-nro
 
 ## Firebase requirements
 
-The NRO uses the public Firebase Web API key already used by the website. A
-Firebase API key is not an admin credential; Firestore Security Rules and the
+The NRO uses the public Firebase Web API keys already used by the website. A
+Firebase API key is not an admin credential; Firestore Security Rules and
 callable Cloud Functions remain the authorization boundary.
 
-The native report action also requires the TobiServices callable function in the account repository to be deployed:
+Deploy the native report callable from the `Tobiservices-Account` directory:
 
 ```sh
 firebase deploy --only functions:reportJdnextHomeworkEntryNative
 ```
 
-The native application requires an internet connection. Email/password
-authentication uses the existing TobiServices Firebase Authentication project.
-For admin functions, the callable functions in `Tobiservices-Account` must be
-deployed and the server-side GitHub secret for NRO builds must be configured.
+For the native and website NRO-build buttons, configure the
+`SWITCH_NRO_GITHUB_TOKEN` Firebase Functions secret and deploy the
+`requestSwitchNroBuild` callable as described in the repository's Firebase
+setup instructions. The token must remain in Firebase Secret Manager and
+must never be included in the NRO.
+
+The application requires an internet connection. Firebase email/password and
+anonymous authentication methods must be enabled in the corresponding Firebase
+projects. The SD JPEG picker reads files from
+`sdmc:/switch/UntisNext/uploads/`.
