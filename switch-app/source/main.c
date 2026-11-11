@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include <ctype.h>
+#include <strings.h>
 
 /*
  * Untis Next native Nintendo Switch client.
@@ -62,7 +63,6 @@ typedef enum {
 static Account g_account;
 static bool g_maintenance = false;
 static char g_maintenance_message[500];
-static bool g_network_ready = false;
 static char g_status[220] = "Bereit.";
 static struct tm g_week_monday;
 static int g_day = 0;
@@ -535,11 +535,17 @@ static bool is_week_a(void) {
     base.tm_year = 2026 - 1900;
     base.tm_mon = 8;
     base.tm_mday = 21; /* Monday configured as the first A-week. */
+    base.tm_hour = current.tm_hour = 12;
     time_t base_time = mktime(&base);
     time_t week_time = mktime(&current);
-    long days = (long)((week_time - base_time) / 86400);
-    long weeks = days / 7;
-    if (days < 0 && days % 7) weeks--;
+    struct tm *b = localtime(&base_time);
+    struct tm *w = localtime(&week_time);
+    /* Convert calendar dates to day counts, avoiding DST's 23/25-hour days. */
+    int base_days = b->tm_yday + 365 * (b->tm_year - 100);
+    int week_days = w->tm_yday + 365 * (w->tm_year - 100);
+    int leap_years_base = (b->tm_year + 1900 - 1) / 4 - (b->tm_year + 1900 - 1) / 100 + (b->tm_year + 1900 - 1) / 400;
+    int leap_years_week = (w->tm_year + 1900 - 1) / 4 - (w->tm_year + 1900 - 1) / 100 + (w->tm_year + 1900 - 1) / 400;
+    int weeks = (week_days + leap_years_week - base_days - leap_years_base) / 7;
     return (weeks % 2) == 0;
 }
 
@@ -868,13 +874,14 @@ static void show_admin_users(void) {
     if (!shown) printf("Keine Accounts oder Antwortformat nicht erkannt.\n");
     printf("\nB = Zurueck\n");
     consoleUpdate(NULL);
+    PadState waitpad;
+    padInitializeDefault(&waitpad);
     while (appletMainLoop()) {
-        padUpdate(NULL);
-        PadState pad;
-        padInitializeDefault(&pad);
+        padUpdate(&waitpad);
         padUpdate(&pad);
-        if (padGetButtonsDown(&pad) & HidNpadButton_B) break;
-        if (padGetButtonsDown(&pad) & HidNpadButton_Plus) break;
+        u64 pressed = padGetButtonsDown(&waitpad);
+        if (pressed & HidNpadButton_B) break;
+        if (pressed & HidNpadButton_Plus) break;
         consoleUpdate(NULL);
     }
     free(t);
@@ -926,11 +933,15 @@ int main(int argc, char *argv[]) {
     padInitializeDefault(&pad);
 
     initialize_week();
+    Result socket_rc = socketInitializeDefault();
+    if (R_FAILED(socket_rc)) {
+        snprintf(g_status, sizeof(g_status), "Switch-Netzwerkdienst nicht verfuegbar (0x%08X).", (unsigned)socket_rc);
+    }
     curl_global_init(CURL_GLOBAL_DEFAULT);
     snprintf(g_status, sizeof(g_status), "Initialisiere native Switch-Verbindung ...");
     consoleUpdate(NULL);
 
-    g_network_ready = true; /* libcurl uses libnx's TLS and network services. */
+    /* switch-curl uses libnx's native TLS service and system trust store. */
     load_maintenance();
     snprintf(g_status, sizeof(g_status), "Native Switch-App bereit. Keine Website wird geoeffnet.");
     draw_timetable();
@@ -1017,6 +1028,7 @@ int main(int argc, char *argv[]) {
     }
 
     curl_global_cleanup();
+    socketExit();
     consoleExit(NULL);
     return 0;
 }
