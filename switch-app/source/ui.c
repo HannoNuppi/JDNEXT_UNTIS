@@ -10,6 +10,123 @@ static u32 *g_pixels = NULL;
 static u32 g_stride_pixels = 0;
 static bool g_ready = false;
 
+static UiColor g_theme_bg = UI_RGB(10, 15, 30);
+static UiColor g_theme_surface = UI_RGB(18, 27, 48);
+static UiColor g_theme_surface_2 = UI_RGB(25, 37, 63);
+static UiColor g_theme_border = UI_RGB(44, 59, 88);
+static UiColor g_theme_text = UI_RGB(236, 242, 255);
+static UiColor g_theme_muted = UI_RGB(145, 161, 190);
+static UiColor g_theme_cyan = UI_RGB(93, 224, 242);
+static UiColor g_theme_purple = UI_RGB(145, 124, 255);
+static UiColor g_theme_green = UI_RGB(84, 214, 160);
+static UiColor g_theme_yellow = UI_RGB(250, 204, 105);
+static UiColor g_theme_red = UI_RGB(255, 112, 128);
+
+
+void ui_set_theme(const char *theme_id) {
+    g_theme_bg = UI_RGB(10, 15, 30);
+    g_theme_surface = UI_RGB(18, 27, 48);
+    g_theme_surface_2 = UI_RGB(25, 37, 63);
+    g_theme_border = UI_RGB(44, 59, 88);
+    g_theme_text = UI_RGB(236, 242, 255);
+    g_theme_muted = UI_RGB(145, 161, 190);
+    g_theme_cyan = UI_RGB(93, 224, 242);
+    g_theme_purple = UI_RGB(145, 124, 255);
+    g_theme_green = UI_RGB(84, 214, 160);
+    g_theme_yellow = UI_RGB(250, 204, 105);
+    g_theme_red = UI_RGB(255, 112, 128);
+
+    if (!theme_id) return;
+    if (strcmp(theme_id, "Ocean") == 0) {
+        g_theme_bg=UI_RGB(5,17,32); g_theme_surface=UI_RGB(7,35,55);
+        g_theme_surface_2=UI_RGB(10,61,82); g_theme_border=UI_RGB(28,102,124);
+        g_theme_cyan=UI_RGB(66,223,255); g_theme_purple=UI_RGB(67,108,255);
+        g_theme_green=UI_RGB(125,255,240); g_theme_yellow=UI_RGB(247,227,125);
+    } else if (strcmp(theme_id, "Sunset") == 0) {
+        g_theme_bg=UI_RGB(34,12,27); g_theme_surface=UI_RGB(55,21,42);
+        g_theme_surface_2=UI_RGB(88,31,57); g_theme_border=UI_RGB(133,61,77);
+        g_theme_cyan=UI_RGB(255,195,110); g_theme_purple=UI_RGB(155,77,190);
+        g_theme_green=UI_RGB(255,170,133); g_theme_yellow=UI_RGB(255,223,132);
+    } else if (strcmp(theme_id, "Forest") == 0) {
+        g_theme_bg=UI_RGB(5,24,21); g_theme_surface=UI_RGB(12,48,39);
+        g_theme_surface_2=UI_RGB(20,75,62); g_theme_border=UI_RGB(37,110,87);
+        g_theme_cyan=UI_RGB(99,241,210); g_theme_purple=UI_RGB(55,126,118);
+        g_theme_green=UI_RGB(134,225,124); g_theme_yellow=UI_RGB(226,227,109);
+    } else if (strcmp(theme_id, "Candy") == 0) {
+        g_theme_bg=UI_RGB(33,10,45); g_theme_surface=UI_RGB(61,19,68);
+        g_theme_surface_2=UI_RGB(94,31,86); g_theme_border=UI_RGB(135,53,115);
+        g_theme_cyan=UI_RGB(131,234,255); g_theme_purple=UI_RGB(179,92,255);
+        g_theme_green=UI_RGB(131,255,212); g_theme_yellow=UI_RGB(255,227,127);
+    } else if (strcmp(theme_id, "Midnight") == 0) {
+        g_theme_bg=UI_RGB(5,8,20); g_theme_surface=UI_RGB(16,20,39);
+        g_theme_surface_2=UI_RGB(35,34,59); g_theme_border=UI_RGB(64,65,99);
+        g_theme_cyan=UI_RGB(120,170,255); g_theme_purple=UI_RGB(108,93,232);
+        g_theme_green=UI_RGB(142,180,255); g_theme_yellow=UI_RGB(212,222,255);
+    } else if (strcmp(theme_id, "Aurora") == 0) {
+        g_theme_bg=UI_RGB(6,23,48); g_theme_surface=UI_RGB(22,26,72);
+        g_theme_surface_2=UI_RGB(31,67,85); g_theme_border=UI_RGB(60,100,128);
+        g_theme_cyan=UI_RGB(107,255,228); g_theme_purple=UI_RGB(115,111,255);
+        g_theme_green=UI_RGB(140,255,205); g_theme_yellow=UI_RGB(255,239,154);
+    } else if (strcmp(theme_id, "Retro") == 0) {
+        g_theme_bg=UI_RGB(29,17,40); g_theme_surface=UI_RGB(57,32,69);
+        g_theme_surface_2=UI_RGB(97,54,80); g_theme_border=UI_RGB(140,75,107);
+        g_theme_cyan=UI_RGB(112,225,194); g_theme_purple=UI_RGB(196,90,162);
+        g_theme_green=UI_RGB(135,225,160); g_theme_yellow=UI_RGB(244,211,94);
+    } else if (strcmp(theme_id, "RoyalRebels") == 0) {
+        g_theme_bg=UI_RGB(19,10,30); g_theme_surface=UI_RGB(49,21,56);
+        g_theme_surface_2=UI_RGB(22,49,87); g_theme_border=UI_RGB(94,49,110);
+        g_theme_cyan=UI_RGB(112,223,255); g_theme_purple=UI_RGB(155,82,201);
+        g_theme_green=UI_RGB(130,224,190); g_theme_yellow=UI_RGB(230,184,255);
+    } else if (strcmp(theme_id, "Bronze") == 0) {
+        g_theme_bg=UI_RGB(28,17,10); g_theme_surface=UI_RGB(65,39,22);
+        g_theme_surface_2=UI_RGB(104,65,37); g_theme_border=UI_RGB(149,94,58);
+        g_theme_cyan=UI_RGB(217,179,143); g_theme_purple=UI_RGB(153,97,63);
+        g_theme_green=UI_RGB(191,173,126); g_theme_yellow=UI_RGB(239,191,123);
+    } else if (strcmp(theme_id, "Silver") == 0) {
+        g_theme_bg=UI_RGB(14,21,33); g_theme_surface=UI_RGB(43,53,72);
+        g_theme_surface_2=UI_RGB(75,91,116); g_theme_border=UI_RGB(122,140,165);
+        g_theme_cyan=UI_RGB(154,233,255); g_theme_purple=UI_RGB(145,166,216);
+        g_theme_green=UI_RGB(186,221,224); g_theme_yellow=UI_RGB(240,244,255);
+    } else if (strcmp(theme_id, "Gold") == 0 || strcmp(theme_id, "WinterGoldEvent") == 0) {
+        g_theme_bg=UI_RGB(31,22,7); g_theme_surface=UI_RGB(72,51,13);
+        g_theme_surface_2=UI_RGB(124,94,25); g_theme_border=UI_RGB(173,136,52);
+        g_theme_cyan=UI_RGB(255,240,166); g_theme_purple=UI_RGB(219,166,75);
+        g_theme_green=UI_RGB(208,225,165); g_theme_yellow=UI_RGB(255,240,166);
+    } else if (strcmp(theme_id, "WinterEvent") == 0) {
+        g_theme_bg=UI_RGB(5,20,42); g_theme_surface=UI_RGB(15,48,78);
+        g_theme_surface_2=UI_RGB(29,81,117); g_theme_border=UI_RGB(90,156,195);
+        g_theme_cyan=UI_RGB(230,251,255); g_theme_purple=UI_RGB(141,188,245);
+        g_theme_green=UI_RGB(188,234,255); g_theme_yellow=UI_RGB(255,231,163);
+    } else if (strcmp(theme_id, "BirthdayEvent") == 0) {
+        g_theme_bg=UI_RGB(41,18,48); g_theme_surface=UI_RGB(94,43,76);
+        g_theme_surface_2=UI_RGB(144,73,115); g_theme_border=UI_RGB(200,121,148);
+        g_theme_cyan=UI_RGB(157,247,237); g_theme_purple=UI_RGB(198,139,255);
+        g_theme_green=UI_RGB(185,240,193); g_theme_yellow=UI_RGB(255,225,160);
+    } else if (strcmp(theme_id, "HalloweenEvent") == 0) {
+        g_theme_bg=UI_RGB(20,8,29); g_theme_surface=UI_RGB(53,17,67);
+        g_theme_surface_2=UI_RGB(92,31,45); g_theme_border=UI_RGB(147,65,39);
+        g_theme_cyan=UI_RGB(214,160,255); g_theme_purple=UI_RGB(152,73,196);
+        g_theme_green=UI_RGB(178,226,144); g_theme_yellow=UI_RGB(255,193,107);
+    } else if (strcmp(theme_id, "AdminMatrix") == 0) {
+        g_theme_bg=UI_RGB(1,6,4); g_theme_surface=UI_RGB(2,20,10);
+        g_theme_surface_2=UI_RGB(4,54,23); g_theme_border=UI_RGB(18,119,55);
+        g_theme_cyan=UI_RGB(184,255,202); g_theme_purple=UI_RGB(18,184,78);
+        g_theme_green=UI_RGB(72,255,131); g_theme_yellow=UI_RGB(228,255,233);
+    }
+}
+
+UiColor ui_color_bg(void) { return g_theme_bg; }
+UiColor ui_color_surface(void) { return g_theme_surface; }
+UiColor ui_color_surface_2(void) { return g_theme_surface_2; }
+UiColor ui_color_border(void) { return g_theme_border; }
+UiColor ui_color_text(void) { return g_theme_text; }
+UiColor ui_color_muted(void) { return g_theme_muted; }
+UiColor ui_color_cyan(void) { return g_theme_cyan; }
+UiColor ui_color_purple(void) { return g_theme_purple; }
+UiColor ui_color_green(void) { return g_theme_green; }
+UiColor ui_color_yellow(void) { return g_theme_yellow; }
+UiColor ui_color_red(void) { return g_theme_red; }
+
 static u32 pack_color(UiColor c) {
     return RGBA8(c.r, c.g, c.b, c.a);
 }
