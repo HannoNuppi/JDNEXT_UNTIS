@@ -42,6 +42,10 @@ typedef struct {
     char email[160];
     char displayName[160];
     char tags[512];
+    char ownedThemes[768];
+    char equippedTheme[64];
+    char profileTitle[64];
+    char profileIcon[32];
     int goldCoins;
     bool disabled;
     bool signedIn;
@@ -67,7 +71,9 @@ typedef enum {
     SCREEN_TIMETABLE = 0,
     SCREEN_LESSON,
     SCREEN_ACCOUNT,
-    SCREEN_ADMIN
+    SCREEN_ADMIN,
+    SCREEN_THEMES,
+    SCREEN_PROFILE
 } Screen;
 
 static Account g_account;
@@ -82,6 +88,8 @@ static struct tm g_week_monday;
 static int g_day = 0;
 static int g_period = 0;
 static int g_menu_selection = 0;
+static int g_profile_title_selection = 0;
+static int g_profile_icon_selection = 0;
 static Screen g_screen = SCREEN_TIMETABLE;
 static LessonEntry g_entries[MAX_ENTRIES];
 static int g_entry_count = 0;
@@ -300,6 +308,37 @@ static int firestore_field_int(const char *s, JsonToken *t, int n, int fields, c
     memcpy(tmp, s + t[value].start, len);
     tmp[len] = 0;
     return atoi(tmp);
+}
+
+static void firestore_field_string_array(const char *s, JsonToken *t, int n,
+                                          int fields, const char *field,
+                                          char *out, size_t cap) {
+    if (!cap) return;
+    out[0] = '|';
+    out[1] = 0;
+    int wrapper = json_object_get(s, t, n, fields, field);
+    int array = json_object_get(s, t, n, wrapper, "arrayValue");
+    int values = json_object_get(s, t, n, array, "values");
+    if (values < 0 || t[values].type != 'a') return;
+    for (int i = 0; i < 30; i++) {
+        int entry = json_array_get(t, n, values, i);
+        if (entry < 0) break;
+        int value = json_object_get(s, t, n, entry, "stringValue");
+        char item[80] = "";
+        json_copy_string(s, t, value, item, sizeof(item));
+        if (!item[0] || strchr(item, '|')) continue;
+        size_t used = strlen(out);
+        if (used + strlen(item) + 2 >= cap) break;
+        strncat(out, item, cap - used - 1);
+        strncat(out, "|", cap - strlen(out) - 1);
+    }
+}
+
+static bool account_owns_theme(const char *theme_id) {
+    if (!theme_id || !theme_id[0]) return false;
+    char needle[96];
+    snprintf(needle, sizeof(needle), "|%s|", theme_id);
+    return strstr(g_account.ownedThemes, needle) != NULL;
 }
 
 /* ------------------------------- HTTPS --------------------------------- */
@@ -778,6 +817,15 @@ static void refresh_profile(void) {
     int fields = root >= 0 ? json_object_get(r.data, t, n, root, "fields") : -1;
     g_account.goldCoins = firestore_field_int(r.data, t, n, fields, "goldCoins");
     g_account.disabled = firestore_field_bool(r.data, t, n, fields, "disabled");
+    firestore_field_string_array(r.data, t, n, fields, "ownedThemes",
+        g_account.ownedThemes, sizeof(g_account.ownedThemes));
+    firestore_field_string(r.data, t, n, fields, "equippedTheme",
+        g_account.equippedTheme, sizeof(g_account.equippedTheme));
+    firestore_field_string(r.data, t, n, fields, "profileTitle",
+        g_account.profileTitle, sizeof(g_account.profileTitle));
+    firestore_field_string(r.data, t, n, fields, "profileIcon",
+        g_account.profileIcon, sizeof(g_account.profileIcon));
+    ui_set_theme(g_account.equippedTheme[0] ? g_account.equippedTheme : "Next");
     int tags_wrapper = json_object_get(r.data, t, n, fields, "tags");
     int tags_array = json_object_get(r.data, t, n, tags_wrapper, "arrayValue");
     int values = json_object_get(r.data, t, n, tags_array, "values");
