@@ -1,52 +1,919 @@
 #include <switch.h>
+#include <curl/curl.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <time.h>
+#include <ctype.h>
 
-#define UNTIS_NEXT_URL "https://hannonuppi.github.io/JDNEXT_UNTIS/"
-#define ADMIN_CENTER_URL "https://hannonuppi.github.io/Tobiservices-Account/admin.html"
+/*
+ * Untis Next native Nintendo Switch client.
+ * No WebKit/Web applet is used. Network access is through HTTPS + Firebase
+ * REST APIs; admin mutations go through existing authenticated callable
+ * Cloud Functions.
+ */
 
-static const char *menu_items[] = {
-    "Untis Next",
-    "TobiServices Admin Center"
+#define TOBI_PROJECT "tobiservices"
+#define OLD_PROJECT "next-untis-plus"
+#define TOBI_API_KEY "AIzaSyCwVh8-JIm-pj8N8bOWgwz8-G_cLQ6AVuQ"
+#define MAX_JSON_TOKENS 12000
+#define MAX_ENTRIES 24
+#define HTTP_LIMIT (768 * 1024)
+
+typedef struct {
+    int start, end, size, parent;
+    char type;
+} JsonToken;
+
+typedef struct {
+    char *data;
+    size_t size;
+    long status;
+} HttpResponse;
+
+typedef struct {
+    char idToken[4096];
+    char refreshToken[2048];
+    char uid[160];
+    char email[160];
+    char displayName[160];
+    char tags[512];
+    int goldCoins;
+    bool disabled;
+    bool signedIn;
+    bool isAdmin;
+} Account;
+
+typedef struct {
+    char title[280];
+    char author[96];
+    bool classwork;
+    bool legacy;
+} LessonEntry;
+
+typedef enum {
+    SCREEN_TIMETABLE = 0,
+    SCREEN_LESSON,
+    SCREEN_ACCOUNT,
+    SCREEN_ADMIN
+} Screen;
+
+static Account g_account;
+static bool g_maintenance = false;
+static char g_maintenance_message[500];
+static bool g_network_ready = false;
+static char g_status[220] = "Bereit.";
+static struct tm g_week_monday;
+static int g_day = 0;
+static int g_period = 0;
+static int g_menu_selection = 0;
+static Screen g_screen = SCREEN_TIMETABLE;
+static LessonEntry g_entries[MAX_ENTRIES];
+static int g_entry_count = 0;
+
+static const char *DAY_NAMES[5] = {
+    "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"
+};
+static const char *DAY_SHORT[5] = { "Mo", "Di", "Mi", "Do", "Fr" };
+static const char *PERIOD_LABELS[6] = { "1.", "2.", "3.", "4.", "5.", "6." };
+static const char *PERIOD_TIMES[6] = {
+    "07:50-08:50", "08:55-09:55", "10:15-11:15",
+    "11:20-12:20", "13:00-14:00", "14:05-15:05"
 };
 
-static void draw_menu(unsigned selected, const char *status) {
-    consoleClear();
-    printf("\x1b[1;1H");
-    printf("========================================\n");
-    printf("        UNTIS NEXT - SWITCH PORTAL      \n");
-    printf("========================================\n\n");
-    printf("  Steuerung: UP/DOWN waehlen, A oeffnen\n");
-    printf("             PLUS beendet die App\n\n");
+static const char *SCHEDULE_A[5][6] = {
+    {"Deutsch", "Geschichte", "Erdkunde", "Latein", "", ""},
+    {"Wahlpflicht", "Kunst", "Physik", "Mathe", "", ""},
+    {"Religion/PPL", "Sport", "Chemie", "Englisch", "", ""},
+    {"Mathe", "Deutsch", "Latein", "Biologie", "", ""},
+    {"Wahlpflicht", "Englisch", "Chemie", "Politik", "", ""}
+};
+static const char *SCHEDULE_B[5][6] = {
+    {"Deutsch", "Geschichte", "Erdkunde", "Latein", "", ""},
+    {"Wahlpflicht", "Kunst", "Physik", "Mathe", "", ""},
+    {"Religion/PPL", "Sport", "Mathe", "Englisch", "", ""},
+    {"Mathe", "Deutsch", "Latein", "Biologie", "", ""},
+    {"Wahlpflicht", "Englisch", "Chemie", "Politik", "", ""}
+};
 
-    for (unsigned i = 0; i < 2; i++) {
-        printf("  %s %s\n", i == selected ? ">" : " ", menu_items[i]);
+/* --------------------------- Small JSON parser ------------------------- */
+static void json_skip_ws(const char *s, int *p) {
+    while (s[*p] && (s[*p] == ' ' || s[*p] == '\n' || s[*p] == '\r' || s[*p] == '\t')) (*p)++;
+}
+
+static int json_new_token(JsonToken *t, int *n, char type, int start, int parent) {
+    if (*n >= MAX_JSON_TOKENS) return -1;
+    int id = (*n)++;
+    t[id].start = start;
+    t[id].end = start;
+    t[id].size = 0;
+    t[id].parent = parent;
+    t[id].type = type;
+    return id;
+}
+
+static int json_parse_value(const char *s, int *p, JsonToken *t, int *n, int parent);
+
+static int json_parse_string(const char *s, int *p, JsonToken *t, int *n, int parent) {
+    if (s[*p] != '"') return -1;
+    int id = json_new_token(t, n, 's', *p + 1, parent);
+    if (id < 0) return -1;
+    (*p)++;
+    while (s[*p]) {
+        if (s[*p] == '\\') {
+            (*p)++;
+            if (s[*p]) (*p)++;
+            continue;
+        }
+        if (s[*p] == '"') {
+            t[id].end = *p;
+            (*p)++;
+            if (parent >= 0) t[parent].size++;
+            return id;
+        }
+        (*p)++;
+    }
+    return -1;
+}
+
+static int json_parse_value(const char *s, int *p, JsonToken *t, int *n, int parent) {
+    json_skip_ws(s, p);
+    char c = s[*p];
+    if (!c) return -1;
+
+    if (c == '"') return json_parse_string(s, p, t, n, parent);
+
+    if (c == '{' || c == '[') {
+        char type = c == '{' ? 'o' : 'a';
+        int id = json_new_token(t, n, type, *p, parent);
+        if (id < 0) return -1;
+        (*p)++;
+        json_skip_ws(s, p);
+        char close = c == '{' ? '}' : ']';
+        while (s[*p] && s[*p] != close) {
+            if (s[*p] == ',' || s[*p] == ':') {
+                (*p)++;
+                continue;
+            }
+            int child = (c == '{' && s[*p] == '"')
+                ? json_parse_string(s, p, t, n, id)
+                : json_parse_value(s, p, t, n, id);
+            if (child < 0) return -1;
+            json_skip_ws(s, p);
+        }
+        if (s[*p] != close) return -1;
+        (*p)++;
+        t[id].end = *p;
+        return id;
     }
 
-    printf("\n----------------------------------------\n");
-    printf("  Internetverbindung erforderlich.\n");
-    printf("  Anmeldungen erfolgen auf der jeweiligen\n");
-    printf("  Website in der Switch-Webansicht.\n");
+    int id = json_new_token(t, n, 'p', *p, parent);
+    if (id < 0) return -1;
+    while (s[*p] && s[*p] != ',' && s[*p] != '}' && s[*p] != ']' &&
+           s[*p] != ' ' && s[*p] != '\n' && s[*p] != '\r' && s[*p] != '\t') {
+        (*p)++;
+    }
+    t[id].end = *p;
+    if (parent >= 0) t[parent].size++;
+    return id;
+}
 
-    if (status && status[0]) {
-        printf("\n%s\n", status);
+static int json_parse(const char *s, JsonToken *t, int *count) {
+    int p = 0;
+    *count = 0;
+    json_skip_ws(s, &p);
+    int root = json_parse_value(s, &p, t, count, -1);
+    return root >= 0 ? root : -1;
+}
+
+static int json_subtree_end(JsonToken *t, int count, int id) {
+    int j = id + 1;
+    while (j < count) {
+        int parent = t[j].parent;
+        bool descendant = false;
+        while (parent >= 0) {
+            if (parent == id) { descendant = true; break; }
+            parent = t[parent].parent;
+        }
+        if (!descendant) break;
+        j++;
+    }
+    return j;
+}
+
+static bool json_token_equals(const char *s, JsonToken *t, int id, const char *value) {
+    if (id < 0) return false;
+    size_t n = (size_t)(t[id].end - t[id].start);
+    return strlen(value) == n && strncmp(s + t[id].start, value, n) == 0;
+}
+
+static int json_object_get(const char *s, JsonToken *t, int count, int object, const char *key) {
+    if (object < 0 || t[object].type != 'o') return -1;
+    int k = object + 1;
+    while (k < count && t[k].parent == object) {
+        int v = k + 1;
+        if (v >= count || t[v].parent != object) return -1;
+        if (json_token_equals(s, t, k, key)) return v;
+        k = json_subtree_end(t, count, v);
+    }
+    return -1;
+}
+
+static int json_array_get(JsonToken *t, int count, int array, int wanted) {
+    if (array < 0 || t[array].type != 'a' || wanted < 0) return -1;
+    int item = array + 1;
+    int index = 0;
+    while (item < count && t[item].parent == array) {
+        if (index == wanted) return item;
+        item = json_subtree_end(t, count, item);
+        index++;
+    }
+    return -1;
+}
+
+static void json_copy_string(const char *s, JsonToken *t, int id, char *out, size_t cap) {
+    if (!cap) return;
+    out[0] = '\0';
+    if (id < 0 || t[id].type != 's') return;
+    size_t w = 0;
+    for (int i = t[id].start; i < t[id].end && w + 1 < cap; i++) {
+        char c = s[i];
+        if (c == '\\' && i + 1 < t[id].end) {
+            char e = s[++i];
+            if (e == 'n') c = '\n';
+            else if (e == 'r') c = '\r';
+            else if (e == 't') c = '\t';
+            else if (e == '"' || e == '\\' || e == '/') c = e;
+            else if (e == 'u' && i + 4 < t[id].end) {
+                /* ASCII is enough for labels; keep a safe placeholder for escaped Unicode. */
+                c = '?';
+                i += 4;
+            } else c = e;
+        }
+        out[w++] = c;
+    }
+    out[w] = '\0';
+}
+
+static void json_get_string(const char *s, JsonToken *t, int n, int obj,
+                            const char *key, char *out, size_t cap) {
+    int value = json_object_get(s, t, n, obj, key);
+    json_copy_string(s, t, value, out, cap);
+}
+
+static bool json_get_bool(const char *s, JsonToken *t, int n, int obj, const char *key) {
+    int value = json_object_get(s, t, n, obj, key);
+    return value >= 0 && t[value].type == 'p' &&
+           (strncmp(s + t[value].start, "true", 4) == 0);
+}
+
+static int json_get_int(const char *s, JsonToken *t, int n, int obj, const char *key, int fallback) {
+    int value = json_object_get(s, t, n, obj, key);
+    if (value < 0) return fallback;
+    char tmp[32];
+    size_t len = (size_t)(t[value].end - t[value].start);
+    if (len == 0 || len >= sizeof(tmp)) return fallback;
+    memcpy(tmp, s + t[value].start, len);
+    tmp[len] = 0;
+    return atoi(tmp);
+}
+
+static void firestore_field_string(const char *s, JsonToken *t, int n, int fields,
+                                   const char *field, char *out, size_t cap) {
+    int wrapper = json_object_get(s, t, n, fields, field);
+    int value = json_object_get(s, t, n, wrapper, "stringValue");
+    json_copy_string(s, t, value, out, cap);
+}
+
+static bool firestore_field_bool(const char *s, JsonToken *t, int n, int fields, const char *field) {
+    int wrapper = json_object_get(s, t, n, fields, field);
+    int value = json_object_get(s, t, n, wrapper, "booleanValue");
+    return value >= 0 && t[value].type == 'p' &&
+           strncmp(s + t[value].start, "true", 4) == 0;
+}
+
+static int firestore_field_int(const char *s, JsonToken *t, int n, int fields, const char *field) {
+    int wrapper = json_object_get(s, t, n, fields, field);
+    int value = json_object_get(s, t, n, wrapper, "integerValue");
+    if (value < 0) return 0;
+    char tmp[32];
+    size_t len = (size_t)(t[value].end - t[value].start);
+    if (!len || len >= sizeof(tmp)) return 0;
+    memcpy(tmp, s + t[value].start, len);
+    tmp[len] = 0;
+    return atoi(tmp);
+}
+
+/* ------------------------------- HTTPS --------------------------------- */
+static size_t http_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    HttpResponse *r = (HttpResponse *)userdata;
+    size_t bytes = size * nmemb;
+    if (r->size + bytes > HTTP_LIMIT) return 0;
+    char *next = (char *)realloc(r->data, r->size + bytes + 1);
+    if (!next) return 0;
+    r->data = next;
+    memcpy(r->data + r->size, ptr, bytes);
+    r->size += bytes;
+    r->data[r->size] = '\0';
+    return bytes;
+}
+
+static bool http_request(const char *url, const char *method, const char *body,
+                         const char *bearer, HttpResponse *out) {
+    memset(out, 0, sizeof(*out));
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        snprintf(g_status, sizeof(g_status), "HTTPS-Client konnte nicht initialisiert werden.");
+        return false;
     }
 
-    printf("\n");
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    if (body) headers = curl_slist_append(headers, "Content-Type: application/json");
+    char auth_header[4300];
+    if (bearer && bearer[0]) {
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", bearer);
+        headers = curl_slist_append(headers, auth_header);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, http_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 35L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "UntisNext-Switch/1.1");
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    if (strcmp(method, "POST") == 0) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body ? body : "");
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, body ? (long)strlen(body) : 0L);
+    } else if (strcmp(method, "PATCH") == 0 || strcmp(method, "DELETE") == 0) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+        if (body) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    }
+
+    CURLcode result = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &out->status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (result != CURLE_OK) {
+        snprintf(g_status, sizeof(g_status), "Netzwerkfehler: %s", curl_easy_strerror(result));
+        free(out->data);
+        out->data = NULL;
+        out->size = 0;
+        return false;
+    }
+    if (!out->data) {
+        out->data = (char *)calloc(1, 1);
+        if (!out->data) return false;
+    }
+    return out->status >= 200 && out->status < 300;
+}
+
+static void http_response_free(HttpResponse *r) {
+    free(r->data);
+    memset(r, 0, sizeof(*r));
+}
+
+static void json_escape(const char *in, char *out, size_t cap) {
+    size_t w = 0;
+    if (!cap) return;
+    for (size_t i = 0; in[i] && w + 3 < cap; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c == '"' || c == '\\') {
+            out[w++] = '\\';
+            out[w++] = (char)c;
+        } else if (c == '\n') {
+            out[w++] = '\\'; out[w++] = 'n';
+        } else if (c == '\r') {
+            out[w++] = '\\'; out[w++] = 'r';
+        } else if (c < 0x20) {
+            continue;
+        } else out[w++] = (char)c;
+    }
+    out[w] = 0;
+}
+
+static bool firebase_sign_in(const char *email, const char *password) {
+    char safe_email[400], safe_password[600], body[1100], url[300];
+    json_escape(email, safe_email, sizeof(safe_email));
+    json_escape(password, safe_password, sizeof(safe_password));
+    snprintf(url, sizeof(url),
+        "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=%s",
+        TOBI_API_KEY);
+    snprintf(body, sizeof(body),
+        "{\"email\":\"%s\",\"password\":\"%s\",\"returnSecureToken\":true}",
+        safe_email, safe_password);
+
+    HttpResponse r;
+    if (!http_request(url, "POST", body, NULL, &r)) {
+        snprintf(g_status, sizeof(g_status), "Anmeldung fehlgeschlagen (HTTP %ld).", r.status);
+        http_response_free(&r);
+        return false;
+    }
+
+    JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    int n = 0, root = json_parse(r.data, t, &n);
+    if (root < 0) {
+        snprintf(g_status, sizeof(g_status), "Firebase-Antwort konnte nicht gelesen werden.");
+        free(t); http_response_free(&r); return false;
+    }
+
+    json_get_string(r.data, t, n, root, "idToken", g_account.idToken, sizeof(g_account.idToken));
+    json_get_string(r.data, t, n, root, "refreshToken", g_account.refreshToken, sizeof(g_account.refreshToken));
+    json_get_string(r.data, t, n, root, "localId", g_account.uid, sizeof(g_account.uid));
+    json_get_string(r.data, t, n, root, "email", g_account.email, sizeof(g_account.email));
+    json_get_string(r.data, t, n, root, "displayName", g_account.displayName, sizeof(g_account.displayName));
+    g_account.signedIn = g_account.idToken[0] != 0 && g_account.uid[0] != 0;
+    free(t);
+    http_response_free(&r);
+
+    if (!g_account.signedIn) {
+        snprintf(g_status, sizeof(g_status), "Firebase hat kein gültiges Anmeldetoken geliefert.");
+        return false;
+    }
+    return true;
+}
+
+static bool firestore_get(const char *project, const char *path, const char *token,
+                          HttpResponse *out) {
+    char url[1500];
+    snprintf(url, sizeof(url),
+        "https://firestore.googleapis.com/v1/projects/%s/databases/(default)/documents/%s",
+        project, path);
+    return http_request(url, "GET", NULL, token, out);
+}
+
+static bool firestore_list(const char *project, const char *path, const char *token,
+                           HttpResponse *out) {
+    char url[1500];
+    snprintf(url, sizeof(url),
+        "https://firestore.googleapis.com/v1/projects/%s/databases/(default)/documents/%s?pageSize=30",
+        project, path);
+    return http_request(url, "GET", NULL, token, out);
+}
+
+static bool call_function(const char *name, const char *data_json, HttpResponse *out) {
+    if (!g_account.signedIn || !g_account.idToken[0]) {
+        snprintf(g_status, sizeof(g_status), "Bitte zuerst mit TobiServices anmelden.");
+        return false;
+    }
+    char url[500], body[2200];
+    snprintf(url, sizeof(url),
+        "https://europe-west1-tobiservices.cloudfunctions.net/%s", name);
+    snprintf(body, sizeof(body), "{\"data\":%s}", data_json ? data_json : "{}");
+    return http_request(url, "POST", body, g_account.idToken, out);
+}
+
+/* ----------------------------- Account data ---------------------------- */
+static void refresh_profile(void) {
+    if (!g_account.signedIn) return;
+    char path[320];
+    snprintf(path, sizeof(path), "users/%s", g_account.uid);
+    HttpResponse r;
+    if (!firestore_get(TOBI_PROJECT, path, g_account.idToken, &r)) {
+        http_response_free(&r);
+        snprintf(g_status, sizeof(g_status), "Profil konnte nicht geladen werden.");
+        return;
+    }
+    JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    int n = 0, root = json_parse(r.data, t, &n);
+    int fields = root >= 0 ? json_object_get(r.data, t, n, root, "fields") : -1;
+    g_account.goldCoins = firestore_field_int(r.data, t, n, fields, "goldCoins");
+    g_account.disabled = firestore_field_bool(r.data, t, n, fields, "disabled");
+    int tags_wrapper = json_object_get(r.data, t, n, fields, "tags");
+    int tags_array = json_object_get(r.data, t, n, tags_wrapper, "arrayValue");
+    int values = json_object_get(r.data, t, n, tags_array, "values");
+    g_account.tags[0] = 0;
+    g_account.isAdmin = false;
+    if (values >= 0 && t[values].type == 'a') {
+        for (int i = 0; i < 30; i++) {
+            int entry = json_array_get(t, n, values, i);
+            if (entry < 0) break;
+            int string_value = json_object_get(r.data, t, n, entry, "stringValue");
+            char tag[80];
+            json_copy_string(r.data, t, string_value, tag, sizeof(tag));
+            if (!tag[0]) continue;
+            if (g_account.tags[0]) strncat(g_account.tags, ", ", sizeof(g_account.tags) - strlen(g_account.tags) - 1);
+            strncat(g_account.tags, tag, sizeof(g_account.tags) - strlen(g_account.tags) - 1);
+            if (strcasecmp(tag, "admin") == 0) g_account.isAdmin = true;
+        }
+    }
+    if (g_account.disabled) g_account.isAdmin = false;
+    free(t);
+    http_response_free(&r);
+}
+
+static void logout_account(void) {
+    memset(&g_account, 0, sizeof(g_account));
+    snprintf(g_status, sizeof(g_status), "Du wurdest abgemeldet.");
+}
+
+static void load_maintenance(void) {
+    HttpResponse r;
+    if (!firestore_get(TOBI_PROJECT, "siteSettings/jdnext", NULL, &r)) {
+        http_response_free(&r);
+        return;
+    }
+    JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    int n = 0, root = json_parse(r.data, t, &n);
+    int fields = root >= 0 ? json_object_get(r.data, t, n, root, "fields") : -1;
+    g_maintenance = firestore_field_bool(r.data, t, n, fields, "enabled");
+    firestore_field_string(r.data, t, n, fields, "message",
+                            g_maintenance_message, sizeof(g_maintenance_message));
+    free(t);
+    http_response_free(&r);
+}
+
+static bool is_week_a(void) {
+    struct tm base = {0}, current = g_week_monday;
+    base.tm_year = 2026 - 1900;
+    base.tm_mon = 8;
+    base.tm_mday = 21; /* Monday configured as the first A-week. */
+    time_t base_time = mktime(&base);
+    time_t week_time = mktime(&current);
+    long days = (long)((week_time - base_time) / 86400);
+    long weeks = days / 7;
+    if (days < 0 && days % 7) weeks--;
+    return (weeks % 2) == 0;
+}
+
+static struct tm date_for_day(int day) {
+    struct tm d = g_week_monday;
+    d.tm_mday += day;
+    mktime(&d);
+    return d;
+}
+
+static void date_key_for_lesson(int day, int period, char *out, size_t cap) {
+    struct tm d = date_for_day(day);
+    snprintf(out, cap, "%04d-%02d-%02d_%d",
+        d.tm_year + 1900, d.tm_mon + 1, d.tm_mday, period);
+}
+
+static const char *subject_for(int day, int period) {
+    return is_week_a() ? SCHEDULE_A[day][period] : SCHEDULE_B[day][period];
+}
+
+static void format_date(struct tm d, char *out, size_t cap) {
+    snprintf(out, cap, "%02d.%02d.%04d", d.tm_mday, d.tm_mon + 1, d.tm_year + 1900);
+}
+
+/* ---------------------------- Lesson data ------------------------------ */
+static void add_entry(const char *title, const char *author, bool classwork, bool legacy) {
+    if (g_entry_count >= MAX_ENTRIES || !title[0]) return;
+    LessonEntry *e = &g_entries[g_entry_count++];
+    snprintf(e->title, sizeof(e->title), "%s", title);
+    snprintf(e->author, sizeof(e->author), "%s", author ? author : "");
+    e->classwork = classwork;
+    e->legacy = legacy;
+}
+
+static void parse_lesson_documents(const char *json, bool classwork, bool legacy) {
+    JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!t) return;
+    int n = 0, root = json_parse(json, t, &n);
+    if (root < 0) { free(t); return; }
+    int docs = json_object_get(json, t, n, root, "documents");
+    for (int i = 0; i < MAX_ENTRIES; i++) {
+        int doc = json_array_get(t, n, docs, i);
+        if (doc < 0) break;
+        int fields = json_object_get(json, t, n, doc, "fields");
+        char title[300] = "", author[100] = "";
+        if (classwork) {
+            firestore_field_string(json, t, n, fields, "title", title, sizeof(title));
+        } else {
+            firestore_field_string(json, t, n, fields, "text", title, sizeof(title));
+            firestore_field_string(json, t, n, fields, "author", author, sizeof(author));
+        }
+        add_entry(title, author, classwork, legacy);
+    }
+    free(t);
+}
+
+static void load_lesson_entries(void) {
+    g_entry_count = 0;
+    char key[64], path[256];
+    date_key_for_lesson(g_day, g_period, key, sizeof(key));
+
+    snprintf(path, sizeof(path), "jdnextHomework/%s/entries", key);
+    HttpResponse r;
+    if (firestore_list(TOBI_PROJECT, path, NULL, &r)) {
+        parse_lesson_documents(r.data, false, false);
+    }
+    http_response_free(&r);
+
+    snprintf(path, sizeof(path), "homework/%s/entries", key);
+    if (firestore_list(OLD_PROJECT, path, NULL, &r)) {
+        parse_lesson_documents(r.data, false, true);
+    }
+    http_response_free(&r);
+
+    snprintf(path, sizeof(path), "classwork/%s/entries", key);
+    if (firestore_list(OLD_PROJECT, path, NULL, &r)) {
+        parse_lesson_documents(r.data, true, false);
+    }
+    http_response_free(&r);
+}
+
+/* ------------------------------ UI ------------------------------------- */
+static void clear_screen(void) {
+    printf("\x1b[2J\x1b[H");
+}
+
+static void print_header(const char *section) {
+    printf("\x1b[1;36m");
+    printf("============================================================\n");
+    printf("                 UNTIS NEXT  |  SWITCH NATIVE\n");
+    printf("============================================================\n");
+    printf("\x1b[0m");
+    printf("\x1b[1;35m%s\x1b[0m\n\n", section);
+}
+
+static void print_footer(void) {
+    printf("\n\x1b[90m");
+    printf("Steuerung: A = Auswaehlen  B = Zurueck  + = Beenden\n");
+    printf("L/R = Woche   Steuerkreuz = Navigation   X = Konto\n");
+    printf("\x1b[0m");
+    printf("\n%s\n", g_status);
     consoleUpdate(NULL);
 }
 
-static Result open_website(const char *url) {
-    WebCommonConfig config;
+static void draw_timetable(void) {
+    clear_screen();
+    print_header("STUNDENPLAN");
+    struct tm friday = date_for_day(4);
+    char monday_text[40], friday_text[40];
+    format_date(g_week_monday, monday_text, sizeof(monday_text));
+    format_date(friday, friday_text, sizeof(friday_text));
+    printf("Woche: %s - %s     Rhythmus: %s-Woche\n",
+        monday_text, friday_text, is_week_a() ? "A" : "B");
+    printf("Profil: %s\n\n", g_account.signedIn
+        ? (g_account.displayName[0] ? g_account.displayName : g_account.email)
+        : "Gast (oeffentliche Daten)");
 
-    // webNewsCreate permits the initial URL's host for the Web applet.
-    Result rc = webNewsCreate(&config, url);
-    if (R_FAILED(rc)) {
-        return rc;
+    printf("%-5s", "Std.");
+    for (int d = 0; d < 5; d++) {
+        struct tm date = date_for_day(d);
+        char dt[24];
+        format_date(date, dt, sizeof(dt));
+        printf(" | %-11s", DAY_SHORT[d]);
+    }
+    printf("\n");
+    printf("------------------------------------------------------------\n");
+    for (int p = 0; p < 6; p++) {
+        printf("\x1b[1;33m%-5s\x1b[0m", PERIOD_LABELS[p]);
+        for (int d = 0; d < 5; d++) {
+            const char *subject = subject_for(d, p);
+            char cell[16];
+            snprintf(cell, sizeof(cell), "%s", subject[0] ? subject : "--");
+            if (d == g_day && p == g_period) printf("\x1b[1;42;30m");
+            printf(" | %-11.11s", cell);
+            if (d == g_day && p == g_period) printf("\x1b[0m");
+        }
+        printf("\n");
+        printf("      %s\n", PERIOD_TIMES[p]);
     }
 
-    // Cursor navigation is easier with a controller than a free pointer.
-    (void)webConfigSetLeftStickMode(&config, WebLeftStickMode_Cursor);
-    return webConfigShow(&config, NULL);
+    printf("\n\x1b[1;33mAusgewaehlt:\x1b[0m %s, %s Stunde - %s\n",
+        DAY_NAMES[g_day], PERIOD_LABELS[g_period], subject_for(g_day, g_period)[0]
+            ? subject_for(g_day, g_period) : "Freistunde");
+    printf("\n");
+    if (g_maintenance) {
+        printf("\x1b[1;31mWARTUNG AKTIV\x1b[0m: %s\n",
+            g_maintenance_message[0] ? g_maintenance_message : "Untis Next ist in Wartung.");
+        if (!g_account.isAdmin) {
+            printf("Die Website ist in Wartung; der native Stundenplan zeigt nur lokal konfigurierte Daten.\n");
+        }
+    }
+    print_footer();
+}
+
+static void draw_lesson(void) {
+    clear_screen();
+    char date[40], key[64];
+    format_date(date_for_day(g_day), date, sizeof(date));
+    date_key_for_lesson(g_day, g_period, key, sizeof(key));
+    char section[180];
+    snprintf(section, sizeof(section), "%s | %s Stunde | %s",
+        subject_for(g_day, g_period), PERIOD_LABELS[g_period], date);
+    print_header(section);
+    printf("Zeit: %s   Daten-Schluessel: %s\n\n", PERIOD_TIMES[g_period], key);
+    printf("\x1b[1;36mHAUSAUFGABEN\x1b[0m\n");
+    int shown = 0;
+    for (int i = 0; i < g_entry_count; i++) {
+        if (g_entries[i].classwork) continue;
+        printf("  - %s", g_entries[i].title);
+        if (g_entries[i].author[0]) printf("  (%s)", g_entries[i].author);
+        if (g_entries[i].legacy) printf("  [alt]");
+        printf("\n");
+        shown++;
+    }
+    if (!shown) printf("  Keine Eintraege gefunden.\n");
+
+    printf("\n\x1b[1;33mKLASSENARBEITEN\x1b[0m\n");
+    shown = 0;
+    for (int i = 0; i < g_entry_count; i++) {
+        if (!g_entries[i].classwork) continue;
+        printf("  - %s\n", g_entries[i].title);
+        shown++;
+    }
+    if (!shown) printf("  Keine Klassenarbeiten eingetragen.\n");
+
+    printf("\n\x1b[90mHinweis: Dieser native Erstport zeigt vorhandene Eintraege an.\n");
+    printf("Erstellen, Melden und Bild-Uploads werden in einem weiteren Ausbauschritt\n");
+    printf("nativ umgesetzt; dafuer wird kein WebKit benoetigt.\x1b[0m\n");
+    print_footer();
+}
+
+static void draw_account(void) {
+    clear_screen();
+    print_header("TOBISERVICES-KONTO");
+    if (g_account.signedIn) {
+        printf("\x1b[1;32mAngemeldet\x1b[0m\n");
+        printf("E-Mail: %s\nUID: %s\n", g_account.email, g_account.uid);
+        printf("Tags: %s\nGoldmuenzen: %d\n",
+            g_account.tags[0] ? g_account.tags : "(keine)", g_account.goldCoins);
+        printf("Dienste: %s\nAdmin: %s\n\n",
+            g_account.disabled ? "GESPERRT" : "Aktiv",
+            g_account.isAdmin ? "Ja" : "Nein");
+    } else {
+        printf("Nicht angemeldet. Oeffentliche Stundenplan-Daten bleiben verfuegbar.\n\n");
+    }
+    const char *items_guest[] = { "Mit TobiServices anmelden", "Zurueck" };
+    const char *items_user[] = { "Admin Center oeffnen", "Abmelden", "Zurueck" };
+    if (g_account.signedIn) {
+        for (int i = 0; i < 3; i++)
+            printf("%s %s\n", g_menu_selection == i ? ">" : " ", items_user[i]);
+    } else {
+        for (int i = 0; i < 2; i++)
+            printf("%s %s\n", g_menu_selection == i ? ">" : " ", items_guest[i]);
+    }
+    print_footer();
+}
+
+static void draw_admin(void) {
+    clear_screen();
+    print_header("TOBISERVICES ADMIN CENTER");
+    printf("\x1b[1;32mAdmin-Berechtigung serverseitig bestaetigt\x1b[0m\n");
+    printf("Konto: %s\n", g_account.email);
+    printf("Wartungsmodus: %s\n", g_maintenance ? "AKTIV" : "Aus");
+    if (g_maintenance_message[0]) printf("Meldung: %s\n", g_maintenance_message);
+    printf("\n");
+    const char *items[] = {
+        "Switch-NRO neu kompilieren",
+        "Wartungsmodus umschalten",
+        "Accountliste anzeigen",
+        "Zurueck zum Konto"
+    };
+    for (int i = 0; i < 4; i++)
+        printf("%s %s\n", g_menu_selection == i ? ">" : " ", items[i]);
+    printf("\n");
+    printf("\x1b[90mDie Admin-Cloud-Funktionen pruefen deine Admin-Rolle bei jedem Aufruf erneut.\x1b[0m\n");
+    print_footer();
+}
+
+static bool keyboard_input(const char *header, const char *guide, bool password,
+                           char *out, size_t cap) {
+    if (!cap) return false;
+    SwkbdConfig kbd;
+    Result rc = swkbdCreate(&kbd, 0);
+    if (R_FAILED(rc)) {
+        snprintf(g_status, sizeof(g_status), "Switch-Tastatur konnte nicht geoeffnet werden.");
+        return false;
+    }
+    if (password) swkbdConfigMakePresetPassword(&kbd);
+    else swkbdConfigMakePresetDefault(&kbd);
+    swkbdConfigSetHeaderText(&kbd, header);
+    swkbdConfigSetGuideText(&kbd, guide);
+    rc = swkbdShow(&kbd, out, cap);
+    swkbdClose(&kbd);
+    return R_SUCCEEDED(rc) && out[0] != 0;
+}
+
+/* ---------------------------- Admin actions ---------------------------- */
+static void request_nro_build(void) {
+    HttpResponse r;
+    bool ok = call_function("requestSwitchNroBuild", "{}", &r);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "NRO-Build abgelehnt (HTTP %ld).", r.status);
+        if (r.data && strstr(r.data, "message")) strncat(g_status, " Firebase/GitHub-Fehler.", sizeof(g_status) - strlen(g_status) - 1);
+        http_response_free(&r);
+        return;
+    }
+    snprintf(g_status, sizeof(g_status), "NRO-Build gestartet. Den Status findest du im GitHub-Workflow.");
+    http_response_free(&r);
+}
+
+static void toggle_maintenance(void) {
+    char data[900], safe_message[700];
+    bool next = !g_maintenance;
+    if (next) {
+        char message[500] = "";
+        if (!keyboard_input("Wartungsmeldung", "Optionale Nachricht fuer Besucher", false,
+                            message, sizeof(message))) {
+            snprintf(g_status, sizeof(g_status), "Wartungsmeldung nicht geaendert.");
+            return;
+        }
+        json_escape(message, safe_message, sizeof(safe_message));
+    } else {
+        json_escape(g_maintenance_message, safe_message, sizeof(safe_message));
+    }
+    snprintf(data, sizeof(data), "{\"enabled\":%s,\"message\":\"%s\"}",
+        next ? "true" : "false", next ? safe_message : "");
+    HttpResponse r;
+    bool ok = call_function("setMaintenanceMode", data, &r);
+    if (ok) {
+        g_maintenance = next;
+        snprintf(g_maintenance_message, sizeof(g_maintenance_message), "%s", next ? safe_message : "");
+        snprintf(g_status, sizeof(g_status), "Wartungsmodus %s.", next ? "aktiviert" : "deaktiviert");
+    } else {
+        snprintf(g_status, sizeof(g_status), "Wartungsmodus konnte nicht geaendert werden (HTTP %ld).", r.status);
+    }
+    http_response_free(&r);
+}
+
+static void show_admin_users(void) {
+    HttpResponse r;
+    bool ok = call_function("listTobiUsers", "{}", &r);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Accountliste nicht verfuegbar (HTTP %ld).", r.status);
+        http_response_free(&r);
+        return;
+    }
+    clear_screen();
+    print_header("ACCOUNT-MONITOR");
+    JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    int n = 0, root = json_parse(r.data, t, &n);
+    int data = root >= 0 ? json_object_get(r.data, t, n, root, "result") : -1;
+    if (data < 0 && root >= 0) data = json_object_get(r.data, t, n, root, "data");
+    int users = data >= 0 ? json_object_get(r.data, t, n, data, "users") : -1;
+    int shown = 0;
+    for (int i = 0; i < 24; i++) {
+        int item = json_array_get(t, n, users, i);
+        if (item < 0) break;
+        char name[100] = "", email[140] = "", tags[140] = "";
+        json_get_string(r.data, t, n, item, "displayName", name, sizeof(name));
+        json_get_string(r.data, t, n, item, "email", email, sizeof(email));
+        json_get_string(r.data, t, n, item, "uid", tags, sizeof(tags));
+        printf("%2d. %s\n    %s\n    UID: %.60s\n\n",
+            i + 1, name[0] ? name : "(ohne Namen)", email, tags);
+        shown++;
+    }
+    if (!shown) printf("Keine Accounts oder Antwortformat nicht erkannt.\n");
+    printf("\nB = Zurueck\n");
+    consoleUpdate(NULL);
+    while (appletMainLoop()) {
+        padUpdate(NULL);
+        PadState pad;
+        padInitializeDefault(&pad);
+        padUpdate(&pad);
+        if (padGetButtonsDown(&pad) & HidNpadButton_B) break;
+        if (padGetButtonsDown(&pad) & HidNpadButton_Plus) break;
+        consoleUpdate(NULL);
+    }
+    free(t);
+    http_response_free(&r);
+    snprintf(g_status, sizeof(g_status), "%d Account-Eintraege angezeigt.", shown);
+}
+
+/* ------------------------------- Actions ------------------------------ */
+static void shift_week(int direction) {
+    g_week_monday.tm_mday += direction * 7;
+    mktime(&g_week_monday);
+}
+
+static void do_login(void) {
+    char email[160] = "", password[200] = "";
+    if (!keyboard_input("TobiServices-Anmeldung", "E-Mail-Adresse", false, email, sizeof(email))) return;
+    if (!keyboard_input("TobiServices-Anmeldung", "Passwort", true, password, sizeof(password))) return;
+    snprintf(g_status, sizeof(g_status), "Melde bei Firebase an ...");
+    consoleUpdate(NULL);
+    if (!firebase_sign_in(email, password)) {
+        memset(password, 0, sizeof(password));
+        return;
+    }
+    memset(password, 0, sizeof(password));
+    refresh_profile();
+    if (g_account.disabled) {
+        logout_account();
+        snprintf(g_status, sizeof(g_status), "Dieses TobiServices-Konto ist gesperrt.");
+        return;
+    }
+    snprintf(g_status, sizeof(g_status), "Erfolgreich angemeldet.");
+}
+
+static void initialize_week(void) {
+    time_t now = time(NULL);
+    struct tm d = *localtime(&now);
+    d.tm_hour = 12; d.tm_min = 0; d.tm_sec = 0;
+    d.tm_mday -= (d.tm_wday + 6) % 7;
+    g_week_monday = *localtime(&(time_t){mktime(&d)});
 }
 
 int main(int argc, char *argv[]) {
@@ -55,60 +922,101 @@ int main(int argc, char *argv[]) {
 
     consoleInit(NULL);
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
-
     PadState pad;
     padInitializeDefault(&pad);
 
-    unsigned selected = 0;
-    char status[160] = "Bereit.";
-    draw_menu(selected, status);
+    initialize_week();
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    snprintf(g_status, sizeof(g_status), "Initialisiere native Switch-Verbindung ...");
+    consoleUpdate(NULL);
+
+    g_network_ready = true; /* libcurl uses libnx's TLS and network services. */
+    load_maintenance();
+    snprintf(g_status, sizeof(g_status), "Native Switch-App bereit. Keine Website wird geoeffnet.");
+    draw_timetable();
 
     while (appletMainLoop()) {
         padUpdate(&pad);
-        const u64 down = padGetButtonsDown(&pad);
-        bool redraw = false;
+        u64 down = padGetButtonsDown(&pad);
 
-        if (down & HidNpadButton_Plus) {
-            break;
-        }
+        if (down & HidNpadButton_Plus) break;
 
-        if (down & HidNpadButton_Up) {
-            selected = (selected + 1) % 2;
-            status[0] = '\0';
-            redraw = true;
-        }
-
-        if (down & HidNpadButton_Down) {
-            selected = (selected + 1) % 2;
-            status[0] = '\0';
-            redraw = true;
-        }
-
-        if (down & HidNpadButton_A) {
-            const char *url = selected == 0 ? UNTIS_NEXT_URL : ADMIN_CENTER_URL;
-            snprintf(status, sizeof(status), "Oeffne %s ...", menu_items[selected]);
-            draw_menu(selected, status);
-
-            const Result rc = open_website(url);
-            if (R_FAILED(rc)) {
-                snprintf(status, sizeof(status),
-                    "Webansicht konnte nicht geoeffnet werden (0x%08lX).",
-                    (unsigned long)rc);
-            } else {
-                snprintf(status, sizeof(status),
-                    "Zurueck aus %s. A oeffnet die Seite erneut.",
-                    menu_items[selected]);
+        if (g_screen == SCREEN_TIMETABLE) {
+            if (down & HidNpadButton_Left) { g_day = (g_day + 4) % 5; }
+            if (down & HidNpadButton_Right) { g_day = (g_day + 1) % 5; }
+            if (down & HidNpadButton_Up) { g_period = (g_period + 5) % 6; }
+            if (down & HidNpadButton_Down) { g_period = (g_period + 1) % 6; }
+            if (down & HidNpadButton_L) shift_week(-1);
+            if (down & HidNpadButton_R) shift_week(1);
+            if (down & HidNpadButton_Y) {
+                load_maintenance();
+                snprintf(g_status, sizeof(g_status), "Wartungsstatus aktualisiert.");
             }
-            redraw = true;
+            if (down & HidNpadButton_A) {
+                if (subject_for(g_day, g_period)[0]) {
+                    snprintf(g_status, sizeof(g_status), "Lade Hausaufgaben und Klassenarbeiten ...");
+                    clear_screen(); print_header("LADEN"); printf("%s\n", g_status); consoleUpdate(NULL);
+                    load_lesson_entries();
+                    g_screen = SCREEN_LESSON;
+                } else {
+                    snprintf(g_status, sizeof(g_status), "Diese Stunde ist als Freistunde eingetragen.");
+                }
+            }
+            if (down & HidNpadButton_X) {
+                g_screen = SCREEN_ACCOUNT;
+                g_menu_selection = 0;
+            }
+            draw_timetable();
+        } else if (g_screen == SCREEN_LESSON) {
+            if (down & HidNpadButton_B) g_screen = SCREEN_TIMETABLE;
+            if (down & HidNpadButton_Y) {
+                load_lesson_entries();
+                snprintf(g_status, sizeof(g_status), "Eintraege aktualisiert.");
+            }
+            draw_lesson();
+        } else if (g_screen == SCREEN_ACCOUNT) {
+            int max_items = g_account.signedIn ? 3 : 2;
+            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + max_items - 1) % max_items;
+            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % max_items;
+            if (down & HidNpadButton_B) g_screen = SCREEN_TIMETABLE;
+            if (down & HidNpadButton_A) {
+                if (!g_account.signedIn) {
+                    if (g_menu_selection == 0) do_login();
+                    else g_screen = SCREEN_TIMETABLE;
+                } else {
+                    if (g_menu_selection == 0) {
+                        if (g_account.isAdmin) {
+                            load_maintenance();
+                            g_screen = SCREEN_ADMIN;
+                            g_menu_selection = 0;
+                        } else snprintf(g_status, sizeof(g_status), "Admin-Rechte sind fuer dieses Konto nicht aktiv.");
+                    } else if (g_menu_selection == 1) {
+                        logout_account();
+                        g_menu_selection = 0;
+                    } else g_screen = SCREEN_TIMETABLE;
+                }
+            }
+            draw_account();
+        } else if (g_screen == SCREEN_ADMIN) {
+            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 3) % 4;
+            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 4;
+            if (down & HidNpadButton_B) g_screen = SCREEN_ACCOUNT;
+            if (down & HidNpadButton_A) {
+                if (!g_account.isAdmin || g_account.disabled) {
+                    g_screen = SCREEN_ACCOUNT;
+                    snprintf(g_status, sizeof(g_status), "Admin-Sitzung ist nicht mehr gueltig.");
+                } else if (g_menu_selection == 0) request_nro_build();
+                else if (g_menu_selection == 1) toggle_maintenance();
+                else if (g_menu_selection == 2) show_admin_users();
+                else g_screen = SCREEN_ACCOUNT;
+            }
+            draw_admin();
         }
 
-        if (redraw) {
-            draw_menu(selected, status);
-        }
-
-        consoleUpdate(NULL);
+        svcSleepThread(16000000ULL);
     }
 
+    curl_global_cleanup();
     consoleExit(NULL);
     return 0;
 }
