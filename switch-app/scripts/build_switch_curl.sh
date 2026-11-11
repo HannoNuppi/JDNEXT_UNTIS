@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-DEVKITPRO="\${DEVKITPRO:-/opt/devkitpro}"
+DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 export DEVKITPRO
 
 if [ ! -f "$DEVKITPRO/switchvars.sh" ]; then
@@ -17,7 +17,7 @@ for tool in tar patch sha256sum make autoconf automake libtoolize; do
   }
 done
 
-WORK="\${RUNNER_TEMP:-/tmp}/untis-next-switch-curl"
+WORK="${RUNNER_TEMP:-/tmp}/untis-next-switch-curl"
 mkdir -p "$WORK"
 cd "$WORK"
 
@@ -49,7 +49,7 @@ cd curl-7.69.1
 patch -Np1 -i ../switch-curl.patch
 ./buildconf
 
-export LDFLAGS="-specs=$DEVKITPRO/libnx/switch.specs \${LDFLAGS:-}"
+export LDFLAGS="-specs=$DEVKITPRO/libnx/switch.specs ${LDFLAGS:-}"
 ./configure \
   --prefix="$PORTLIBS_PREFIX" \
   --host=aarch64-none-elf \
