@@ -7,6 +7,8 @@
 #include <time.h>
 #include <ctype.h>
 #include <strings.h>
+#include <errno.h>
+#include <limits.h>
 #include "ui.h"
 
 /*
@@ -1727,7 +1729,7 @@ static bool load_admin_user_list(void) {
 static void draw_admin_users_screen(int selected) {
     ui_begin();
     draw_sidebar("ADMIN");
-    draw_top_header("ACCOUNT-MANAGER", "A SPERRE UMSCHALTEN  |  X TAGS BEARBEITEN  |  Y AKTUALISIEREN");
+    draw_top_header("ACCOUNT-MANAGER", "A SPERRE  |  X TAGS  |  L GOLD  |  R EVENT-THEME  |  Y AKTUALISIEREN");
     for (int i = 0; i < g_admin_user_count; i++) {
         int column = i / 12;
         int row = i % 12;
@@ -1738,6 +1740,9 @@ static void draw_admin_users_screen(int selected) {
         ui_text(x + 10, y + 7, g_admin_users[i].displayName[0]
             ? g_admin_users[i].displayName : "(OHNE NAMEN)", 1, active ? UI_CYAN : UI_TEXT);
         ui_text(x + 206, y + 7, g_admin_users[i].email, 1, UI_MUTED);
+        char coins[24];
+        snprintf(coins, sizeof(coins), "%d", g_admin_users[i].goldCoins);
+        ui_text(x + 340, y + 7, coins, 1, UI_YELLOW);
         ui_badge(x + 388, y + 4, 80,
             g_admin_users[i].disabled ? "GESPERRT" : "AKTIV",
             g_admin_users[i].disabled ? UI_RED : UI_SURFACE_2,
@@ -1884,6 +1889,224 @@ static bool toggle_admin_user_disabled(AdminUser *user) {
     return ok;
 }
 
+
+static bool admin_set_user_coins(AdminUser *user) {
+    char input[40] = "";
+    char guide[120];
+    snprintf(guide, sizeof(guide), "Neuer Kontostand fuer %s", user->displayName);
+    if (!keyboard_input("Goldmuenzen bearbeiten", guide, false, input, sizeof(input))) {
+        snprintf(g_status, sizeof(g_status), "Muenzaenderung abgebrochen.");
+        return false;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    long long value = strtoll(input, &end, 10);
+    while (end && *end && isspace((unsigned char)*end)) end++;
+    const long long js_safe_limit = 9007199254740991LL;
+    if (errno == ERANGE || end == input || (end && *end != 0)
+        || value < -js_safe_limit || value > js_safe_limit) {
+        snprintf(g_status, sizeof(g_status), "Bitte eine ganze Zahl im sicheren Zahlenbereich eingeben.");
+        return false;
+    }
+    if (strcmp(user->uid, g_account.uid) == 0 && value <= -50) {
+        snprintf(g_status, sizeof(g_status), "Du kannst deinen eigenen Admin-Account nicht sperren.");
+        return false;
+    }
+
+    char safe_uid[400], body[1600];
+    json_escape(user->uid, safe_uid, sizeof(safe_uid));
+    char fields[400], mask[160];
+    if (value <= -50) {
+        snprintf(fields, sizeof(fields),
+            "\"goldCoins\":{\"integerValue\":\"%lld\"},\"disabled\":{\"booleanValue\":true}",
+            value);
+        snprintf(mask, sizeof(mask),
+            "\"fieldPaths\":[\"goldCoins\",\"disabled\"]");
+    } else {
+        snprintf(fields, sizeof(fields),
+            "\"goldCoins\":{\"integerValue\":\"%lld\"}", value);
+        snprintf(mask, sizeof(mask),
+            "\"fieldPaths\":[\"goldCoins\"]");
+    }
+
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+            "\"fields\":{%s}"
+          "},"
+          "\"updateMask\":{%s},"
+          "\"updateTransforms\":[{\"fieldPath\":\"lastProfileChangeAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}],"
+          "\"currentDocument\":{\"exists\":true}"
+        "}]}",
+        TOBI_PROJECT, safe_uid, fields, mask);
+
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Muenzaenderung konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status),
+            "Muenzen konnten nicht gespeichert werden (HTTP %ld).", response.status);
+    } else {
+        user->goldCoins = (int)value;
+        if (value <= -50) user->disabled = true;
+        snprintf(g_status, sizeof(g_status), "Neuer Kontostand: %lld Goldmuenzen.", value);
+    }
+    http_response_free(&response);
+    return ok;
+}
+
+static bool admin_toggle_event_theme(AdminUser *user) {
+    char input[80] = "";
+    if (!keyboard_input("Event-Theme", "+ID vergeben, -ID entziehen",
+                        false, input, sizeof(input))) {
+        snprintf(g_status, sizeof(g_status), "Event-Theme-Aktion abgebrochen.");
+        return false;
+    }
+
+    bool grant = input[0] == '+';
+    bool revoke = input[0] == '-';
+    const char *theme_id = input + 1;
+    if ((!grant && !revoke) ||
+        (strcmp(theme_id, "WinterEvent") != 0 &&
+         strcmp(theme_id, "BirthdayEvent") != 0 &&
+         strcmp(theme_id, "HalloweenEvent") != 0 &&
+         strcmp(theme_id, "WinterGoldEvent") != 0)) {
+        snprintf(g_status, sizeof(g_status),
+            "Erlaubt: +WinterEvent, +BirthdayEvent, +HalloweenEvent, +WinterGoldEvent (oder - zum Entziehen).");
+        return false;
+    }
+
+    char path[256];
+    snprintf(path, sizeof(path), "users/%s", user->uid);
+    HttpResponse read_response;
+    if (!firestore_get(TOBI_PROJECT, path, g_account.idToken, &read_response)) {
+        snprintf(g_status, sizeof(g_status), "Zielprofil konnte nicht geladen werden (HTTP %ld).",
+            read_response.status);
+        http_response_free(&read_response);
+        return false;
+    }
+
+    JsonToken *tokens = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!tokens) {
+        http_response_free(&read_response);
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer die Theme-Liste.");
+        return false;
+    }
+    int count_tokens = 0;
+    int root = json_parse(read_response.data, tokens, &count_tokens);
+    int fields = root >= 0
+        ? json_object_get(read_response.data, tokens, count_tokens, root, "fields") : -1;
+    char equipped[80] = "";
+    firestore_field_string(read_response.data, tokens, count_tokens,
+                           fields, "equippedTheme", equipped, sizeof(equipped));
+
+    char owned[30][64];
+    int owned_count = 0;
+    int wrapper = json_object_get(read_response.data, tokens, count_tokens, fields, "ownedThemes");
+    int array = json_object_get(read_response.data, tokens, count_tokens, wrapper, "arrayValue");
+    int values = json_object_get(read_response.data, tokens, count_tokens, array, "values");
+    if (values >= 0 && tokens[values].type == 'a') {
+        for (int i = 0; i < 30; i++) {
+            int item = json_array_get(tokens, count_tokens, values, i);
+            if (item < 0) break;
+            int value = json_object_get(read_response.data, tokens, count_tokens, item, "stringValue");
+            char name[64] = "";
+            json_copy_string(read_response.data, tokens, value, name, sizeof(name));
+            if (name[0] && owned_count < 30) snprintf(owned[owned_count++], 64, "%s", name);
+        }
+    }
+    free(tokens);
+    http_response_free(&read_response);
+
+    int found = -1;
+    for (int i = 0; i < owned_count; i++)
+        if (strcmp(owned[i], theme_id) == 0) { found = i; break; }
+
+    if (grant && found >= 0) {
+        snprintf(g_status, sizeof(g_status), "Dieses Event-Theme besitzt das Konto bereits.");
+        return true;
+    }
+    if (revoke && found < 0) {
+        snprintf(g_status, sizeof(g_status), "Dieses Event-Theme ist nicht freigeschaltet.");
+        return true;
+    }
+    if (grant) {
+        if (owned_count >= 30) {
+            snprintf(g_status, sizeof(g_status), "Die Theme-Liste des Kontos ist voll.");
+            return false;
+        }
+        snprintf(owned[owned_count++], 64, "%s", theme_id);
+    } else {
+        for (int i = found; i + 1 < owned_count; i++)
+            snprintf(owned[i], 64, "%s", owned[i + 1]);
+        owned_count--;
+    }
+
+    char owned_json[3000] = "{\"arrayValue\":{\"values\":[";
+    for (int i = 0; i < owned_count; i++) {
+        size_t used = strlen(owned_json);
+        int written = snprintf(owned_json + used, sizeof(owned_json) - used,
+            "%s{\"stringValue\":\"%s\"}", i ? "," : "", owned[i]);
+        if (written < 0 || (size_t)written >= sizeof(owned_json) - used) {
+            snprintf(g_status, sizeof(g_status), "Theme-Liste ist zu gross.");
+            return false;
+        }
+    }
+    strncat(owned_json, "]}}", sizeof(owned_json) - strlen(owned_json) - 1);
+
+    char safe_uid[400], body[5000], fields_json[3400], update_mask[180];
+    json_escape(user->uid, safe_uid, sizeof(safe_uid));
+    bool reset_equipped = revoke && strcmp(equipped, theme_id) == 0;
+    if (reset_equipped) {
+        snprintf(fields_json, sizeof(fields_json),
+            "\"ownedThemes\":%s,\"equippedTheme\":{\"stringValue\":\"Next\"}",
+            owned_json);
+        snprintf(update_mask, sizeof(update_mask),
+            "\"fieldPaths\":[\"ownedThemes\",\"equippedTheme\"]");
+    } else {
+        snprintf(fields_json, sizeof(fields_json), "\"ownedThemes\":%s", owned_json);
+        snprintf(update_mask, sizeof(update_mask), "\"fieldPaths\":[\"ownedThemes\"]");
+    }
+
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+            "\"fields\":{%s}"
+          "},"
+          "\"updateMask\":{%s},"
+          "\"updateTransforms\":[{\"fieldPath\":\"lastProfileChangeAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}],"
+          "\"currentDocument\":{\"exists\":true}"
+        "}]}",
+        TOBI_PROJECT, safe_uid, fields_json, update_mask);
+
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Event-Theme-Aenderung konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Event-Theme konnte nicht geaendert werden (HTTP %ld).",
+            response.status);
+    } else {
+        snprintf(g_status, sizeof(g_status), "%s fuer %s.",
+            grant ? "Event-Theme freigeschaltet" : "Event-Theme entzogen", user->displayName);
+        if (strcmp(user->uid, g_account.uid) == 0) refresh_profile();
+    }
+    http_response_free(&response);
+    return ok;
+}
+
 static void show_admin_users(void) {
     if (!load_admin_user_list()) return;
     int selected = 0;
@@ -1922,6 +2145,20 @@ static void show_admin_users(void) {
                     load_admin_user_list();
                     if (g_admin_user_count > 0) selected %= g_admin_user_count;
                 }
+                redraw = true;
+                break;
+            }
+            if (g_admin_user_count > 0 && (pressed & HidNpadButton_L)) {
+                admin_set_user_coins(&g_admin_users[selected]);
+                load_admin_user_list();
+                if (g_admin_user_count > 0) selected %= g_admin_user_count;
+                redraw = true;
+                break;
+            }
+            if (g_admin_user_count > 0 && (pressed & HidNpadButton_R)) {
+                admin_toggle_event_theme(&g_admin_users[selected]);
+                load_admin_user_list();
+                if (g_admin_user_count > 0) selected %= g_admin_user_count;
                 redraw = true;
                 break;
             }
