@@ -47,6 +47,22 @@ printf '%s  %s\n' \
 tar -xf curl-7.69.1.tar.xz
 cd curl-7.69.1
 patch -Np1 -i ../switch-curl.patch
+
+# curl 7.69.1 contains an invalid AC_REQUIRE([AC_RUN_IFELSE]) wrapper.
+# Remove the exact upstream-bug line so configure works when cross-compiling
+# for aarch64-none-elf (curl/curl#5126; upstream fix: curl/curl#5130).
+BROKEN_CROSS_COMPILE_LINE='AC_REQUIRE([AC_RUN_IFELSE])dnl'
+if ! grep -Fq "$BROKEN_CROSS_COMPILE_LINE" m4/curl-functions.m4; then
+  echo "Expected curl 7.69.1 cross-compile bug line was not found." >&2
+  exit 1
+fi
+grep -Fv "$BROKEN_CROSS_COMPILE_LINE" m4/curl-functions.m4 > m4/curl-functions.m4.tmp
+mv m4/curl-functions.m4.tmp m4/curl-functions.m4
+if grep -Fq "$BROKEN_CROSS_COMPILE_LINE" m4/curl-functions.m4; then
+  echo "Could not remove curl cross-compile bug line." >&2
+  exit 1
+fi
+
 ./buildconf
 
 export LDFLAGS="-specs=$DEVKITPRO/libnx/switch.specs ${LDFLAGS:-}"
