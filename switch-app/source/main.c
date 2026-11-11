@@ -97,6 +97,14 @@ typedef struct {
     long long goldCoins;
 } LeaderEntry;
 
+#define MAX_ACCESS_TAGS 100
+typedef struct {
+    char tags[MAX_ACCESS_TAGS][32];
+    int tag_count;
+    char permissions[4][MAX_ACCESS_TAGS][32];
+    int permission_count[4];
+} AccessControlState;
+
 typedef enum {
     SCREEN_TIMETABLE = 0,
     SCREEN_LESSON,
@@ -114,6 +122,8 @@ static AdminUser g_admin_users[24];
 static int g_admin_user_count = 0;
 static LeaderEntry g_leaderboard[30];
 static int g_leaderboard_count = 0;
+static AccessControlState g_access_control;
+static int g_access_resource_selection = 0;
 static unsigned long g_write_counter = 0;
 static bool g_socket_initialized = false;
 static bool g_maintenance = false;
@@ -1976,6 +1986,7 @@ static void draw_admin(void) {
         "ACCOUNTLISTE UND VERWALTUNG",
         "UNTIS NEXT LIVE FREIGEBEN",
         "GOLD-RANGLISTE",
+        "ZUGRIFFSRECHTE VERWALTEN",
         "ZURUECK ZUM KONTO"
     };
     const char *descriptions[] = {
@@ -1984,15 +1995,16 @@ static void draw_admin(void) {
         "Accounts, Tags, Sperren, Muenzen und Event-Themes verwalten.",
         "Gibt die aktuelle Test-Version fuer die Live-Website frei.",
         "Zeigt die Gold-Rangliste der TobiServices-Profile.",
+        "Verwalte Tags und Ressourcen-Freigaben.",
         "Zurueck zu deinen Kontoinformationen."
     };
-    for (int i = 0; i < 6; i++) {
-        int y = 276 + i * 58;
+    for (int i = 0; i < 7; i++) {
+        int y = 266 + i * 50;
         bool selected = g_menu_selection == i;
-        ui_card(252, y, 996, 50, selected);
-        ui_text(278, y + 8, items[i], 1, selected ? UI_CYAN : UI_TEXT);
-        ui_text(278, y + 30, descriptions[i], 1, UI_MUTED);
-        ui_text(1194, y + 15, ">", 2, selected ? UI_CYAN : UI_MUTED);
+        ui_card(252, y, 996, 44, selected);
+        ui_text(278, y + 7, items[i], 1, selected ? UI_CYAN : UI_TEXT);
+        ui_text(278, y + 27, descriptions[i], 1, UI_MUTED);
+        ui_text(1194, y + 12, ">", 2, selected ? UI_CYAN : UI_MUTED);
     }
     ui_text(252, 629, "NUR AKTIVE ADMINS  |  JEDE AENDERUNG WIRD SERVERSEITIG GEPRUEFT",
             1, UI_MUTED);
@@ -2666,6 +2678,337 @@ static void show_admin_leaderboard(void) {
     }
 }
 
+
+static const char *ACCESS_RESOURCE_IDS[4] = {
+    "test-mode", "jdnext", "untis-next", "account-apk"
+};
+static const char *ACCESS_RESOURCE_NAMES[4] = {
+    "UNTIS NEXT TEST MODE", "JDNEXT", "UNTIS NEXT", "APK-DOWNLOAD"
+};
+
+static int access_tag_index(const char *tag) {
+    for (int i = 0; i < g_access_control.tag_count; i++)
+        if (strcmp(g_access_control.tags[i], tag) == 0) return i;
+    return -1;
+}
+
+static void add_access_tag(char list[][32], int *count, const char *tag) {
+    if (!tag || !tag[0] || *count >= MAX_ACCESS_TAGS) return;
+    for (int i = 0; i < *count; i++) if (strcmp(list[i], tag) == 0) return;
+    snprintf(list[(*count)++], 32, "%s", tag);
+}
+
+static bool parse_access_tag_list(const char *input, char output[][32],
+                                  int *count, bool require_existing) {
+    *count = 0;
+    char copy[1800];
+    snprintf(copy, sizeof(copy), "%s", input ? input : "");
+    char *save = NULL;
+    char *part = strtok_r(copy, ",", &save);
+    while (part) {
+        while (*part && isspace((unsigned char)*part)) part++;
+        size_t len = strlen(part);
+        while (len && isspace((unsigned char)part[len - 1])) part[--len] = 0;
+        if (!len) {
+            part = strtok_r(NULL, ",", &save);
+            continue;
+        }
+        if (len > 24 || *count >= MAX_ACCESS_TAGS) {
+            snprintf(g_status, sizeof(g_status), "Tags duerfen maximal 24 Zeichen bzw. 100 Eintraege haben.");
+            return false;
+        }
+        for (size_t i = 0; i < len; i++) {
+            unsigned char ch = (unsigned char)part[i];
+            if (!(isalnum(ch) || ch == '_' || ch == '-' || ch >= 0x80)) {
+                snprintf(g_status, sizeof(g_status), "Ungueltiges Zeichen in einem Tag.");
+                return false;
+            }
+            part[i] = (char)tolower(ch);
+        }
+        if (require_existing && access_tag_index(part) < 0) {
+            snprintf(g_status, sizeof(g_status), "Tag '%s' ist nicht in der Tag-Liste.", part);
+            return false;
+        }
+        add_access_tag(output, count, part);
+        part = strtok_r(NULL, ",", &save);
+    }
+    return true;
+}
+
+static void set_default_access_control(void) {
+    memset(&g_access_control, 0, sizeof(g_access_control));
+    add_access_tag(g_access_control.tags, &g_access_control.tag_count, "admin");
+    add_access_tag(g_access_control.tags, &g_access_control.tag_count, "dance-beta");
+    add_access_tag(g_access_control.permissions[0], &g_access_control.permission_count[0], "admin");
+    add_access_tag(g_access_control.permissions[1], &g_access_control.permission_count[1], "admin");
+    add_access_tag(g_access_control.permissions[1], &g_access_control.permission_count[1], "dance-beta");
+}
+
+static bool load_access_control_native(void) {
+    memset(&g_access_control, 0, sizeof(g_access_control));
+    HttpResponse response;
+    if (!firestore_get(TOBI_PROJECT, "siteSettings/accessControl",
+                       g_account.idToken, &response)) {
+        if (response.status == 404) {
+            set_default_access_control();
+            http_response_free(&response);
+            return true;
+        }
+        snprintf(g_status, sizeof(g_status),
+            "Zugriffsregeln konnten nicht geladen werden (HTTP %ld).", response.status);
+        http_response_free(&response);
+        return false;
+    }
+
+    JsonToken *tokens = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!tokens) {
+        http_response_free(&response);
+        return false;
+    }
+    int count = 0;
+    int root = json_parse(response.data, tokens, &count);
+    int fields = root >= 0
+        ? json_object_get(response.data, tokens, count, root, "fields") : -1;
+
+    int tags_wrapper = json_object_get(response.data, tokens, count, fields, "tags");
+    int tags_array = json_object_get(response.data, tokens, count, tags_wrapper, "arrayValue");
+    int tags_values = json_object_get(response.data, tokens, count, tags_array, "values");
+    if (tags_values >= 0 && tokens[tags_values].type == 'a') {
+        for (int i = 0; i < MAX_ACCESS_TAGS; i++) {
+            int item = json_array_get(tokens, count, tags_values, i);
+            if (item < 0) break;
+            char tag[32] = "";
+            json_copy_string(response.data, tokens, item, tag, sizeof(tag));
+            if (tag[0]) add_access_tag(g_access_control.tags, &g_access_control.tag_count, tag);
+        }
+    }
+    if (access_tag_index("admin") < 0)
+        add_access_tag(g_access_control.tags, &g_access_control.tag_count, "admin");
+
+    int permissions_wrapper = json_object_get(response.data, tokens, count, fields, "permissions");
+    int permissions_map = json_object_get(response.data, tokens, count, permissions_wrapper, "mapValue");
+    int permissions_fields = json_object_get(response.data, tokens, count, permissions_map, "fields");
+
+    for (int resource = 0; resource < 4; resource++) {
+        int wrapper = json_object_get(response.data, tokens, count, permissions_fields,
+                                      ACCESS_RESOURCE_IDS[resource]);
+        int array = json_object_get(response.data, tokens, count, wrapper, "arrayValue");
+        int values = json_object_get(response.data, tokens, count, array, "values");
+        if (values >= 0 && tokens[values].type == 'a') {
+            for (int i = 0; i < MAX_ACCESS_TAGS; i++) {
+                int item = json_array_get(tokens, count, values, i);
+                if (item < 0) break;
+                char tag[32] = "";
+                json_copy_string(response.data, tokens, item, tag, sizeof(tag));
+                if (tag[0] && access_tag_index(tag) >= 0)
+                    add_access_tag(g_access_control.permissions[resource],
+                        &g_access_control.permission_count[resource], tag);
+            }
+        } else if (resource == 0) {
+            add_access_tag(g_access_control.permissions[resource],
+                &g_access_control.permission_count[resource], "admin");
+        } else if (resource == 1) {
+            add_access_tag(g_access_control.permissions[resource],
+                &g_access_control.permission_count[resource], "admin");
+            add_access_tag(g_access_control.permissions[resource],
+                &g_access_control.permission_count[resource], "dance-beta");
+        }
+    }
+
+    free(tokens);
+    http_response_free(&response);
+    return true;
+}
+
+static bool save_access_control_native(void) {
+    if (access_tag_index("admin") < 0) {
+        snprintf(g_status, sizeof(g_status), "Der admin-Tag muss immer vorhanden sein.");
+        return false;
+    }
+
+    char tags_json[5000] = "{\"arrayValue\":{\"values\":[";
+    for (int i = 0; i < g_access_control.tag_count; i++) {
+        size_t used = strlen(tags_json);
+        int written = snprintf(tags_json + used, sizeof(tags_json) - used,
+            "%s{\"stringValue\":\"%s\"}", i ? "," : "", g_access_control.tags[i]);
+        if (written < 0 || (size_t)written >= sizeof(tags_json) - used) return false;
+    }
+    strncat(tags_json, "]}}", sizeof(tags_json) - strlen(tags_json) - 1);
+
+    char permission_json[14000] = "{\"mapValue\":{\"fields\":{";
+    for (int resource = 0; resource < 4; resource++) {
+        char array_json[3000] = "{\"arrayValue\":{\"values\":[";
+        for (int i = 0; i < g_access_control.permission_count[resource]; i++) {
+            const char *tag = g_access_control.permissions[resource][i];
+            if (access_tag_index(tag) < 0) {
+                snprintf(g_status, sizeof(g_status), "Berechtigung verweist auf einen unbekannten Tag.");
+                return false;
+            }
+            size_t used = strlen(array_json);
+            int written = snprintf(array_json + used, sizeof(array_json) - used,
+                "%s{\"stringValue\":\"%s\"}", i ? "," : "", tag);
+            if (written < 0 || (size_t)written >= sizeof(array_json) - used) return false;
+        }
+        strncat(array_json, "]}}", sizeof(array_json) - strlen(array_json) - 1);
+        size_t used = strlen(permission_json);
+        int written = snprintf(permission_json + used, sizeof(permission_json) - used,
+            "%s\"%s\":%s", resource ? "," : "",
+            ACCESS_RESOURCE_IDS[resource], array_json);
+        if (written < 0 || (size_t)written >= sizeof(permission_json) - used) return false;
+    }
+    strncat(permission_json, "}}}", sizeof(permission_json) - strlen(permission_json) - 1);
+
+    char body[24000];
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/siteSettings/accessControl\","
+            "\"fields\":{"
+              "\"tags\":%s,"
+              "\"permissions\":%s,"
+              "\"updatedBy\":{\"stringValue\":\"%s\"}"
+            "}"
+          "},"
+          "\"updateMask\":{\"fieldPaths\":[\"tags\",\"permissions\",\"updatedBy\"]},"
+          "\"updateTransforms\":[{\"fieldPath\":\"updatedAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}]"
+        "}]}",
+        TOBI_PROJECT, tags_json, permission_json, g_account.uid);
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Zugriffsregeln sind zu gross fuer einen Firestore-Commit.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) snprintf(g_status, sizeof(g_status),
+        "Zugriffsregeln abgelehnt (HTTP %ld).", response.status);
+    else snprintf(g_status, sizeof(g_status), "Zugriffsregeln gespeichert.");
+    http_response_free(&response);
+    return ok;
+}
+
+static void draw_access_control_native(void) {
+    ui_begin();
+    draw_sidebar("ADMIN");
+    draw_top_header("ZUGRIFFSRECHTE", "A RESSOURCE BEARBEITEN  |  X TAG-LISTE  |  Y SPEICHERN");
+    ui_card(252, 146, 334, 468, false);
+    ui_text(274, 166, "FREIGEGEBENE TAGS", 1, UI_CYAN);
+    int shown = g_access_control.tag_count < 20 ? g_access_control.tag_count : 20;
+    for (int i = 0; i < shown; i++) {
+        ui_text(278, 198 + i * 20, g_access_control.tags[i], 1, UI_TEXT);
+    }
+    ui_card(606, 146, 642, 468, false);
+    ui_text(630, 166, "RESSOURCEN", 1, UI_CYAN);
+    for (int resource = 0; resource < 4; resource++) {
+        int y = 202 + resource * 100;
+        bool selected = resource == g_access_resource_selection;
+        ui_card(626, y, 598, 88, selected);
+        ui_text(648, y + 14, ACCESS_RESOURCE_NAMES[resource], 1,
+                selected ? UI_CYAN : UI_TEXT);
+        char joined[700] = "";
+        for (int i = 0; i < g_access_control.permission_count[resource]; i++) {
+            if (i) strncat(joined, ", ", sizeof(joined) - strlen(joined) - 1);
+            strncat(joined, g_access_control.permissions[resource][i],
+                sizeof(joined) - strlen(joined) - 1);
+        }
+        ui_text(648, y + 46, joined[0] ? joined : "(OEFFENTLICH)", 1, UI_MUTED);
+    }
+    ui_text(252, 629, "A BERECHTIGUNG  |  X TAGS  |  Y SPEICHERN  |  B ZURUECK",
+            1, UI_MUTED);
+    draw_status_bar();
+    ui_end();
+}
+
+static void show_access_control_native(void) {
+    if (!g_account.signedIn || g_account.disabled || !g_account.isAdmin) {
+        snprintf(g_status, sizeof(g_status), "Nur aktive Admins duerfen Zugriffsregeln verwalten.");
+        return;
+    }
+    if (!load_access_control_native()) return;
+    g_access_resource_selection = 0;
+
+    while (appletMainLoop()) {
+        draw_access_control_native();
+        PadState waitpad;
+        padInitializeDefault(&waitpad);
+        bool redraw = false;
+        while (appletMainLoop()) {
+            padUpdate(&waitpad);
+            u64 pressed = padGetButtonsDown(&waitpad);
+            if (pressed & HidNpadButton_B) return;
+            if (pressed & HidNpadButton_Up) {
+                g_access_resource_selection = (g_access_resource_selection + 3) % 4;
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_Down) {
+                g_access_resource_selection = (g_access_resource_selection + 1) % 4;
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_A) {
+                char input[1200] = "";
+                if (keyboard_input("Ressourcen-Tags",
+                    "Kommagetrennt; leer = oeffentlich", false, input, sizeof(input))) {
+                    char parsed[MAX_ACCESS_TAGS][32];
+                    int parsed_count = 0;
+                    if (parse_access_tag_list(input, parsed, &parsed_count, true)) {
+                        g_access_control.permission_count[g_access_resource_selection] = parsed_count;
+                        memcpy(g_access_control.permissions[g_access_resource_selection],
+                            parsed, sizeof(parsed));
+                        snprintf(g_status, sizeof(g_status), "Berechtigung lokal geaendert. Y speichert.");
+                    }
+                }
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_X) {
+                char input[1800] = "";
+                if (keyboard_input("Freigegebene Tags",
+                    "Kommagetrennt; admin muss enthalten bleiben", false, input, sizeof(input))) {
+                    char parsed[MAX_ACCESS_TAGS][32];
+                    int parsed_count = 0;
+                    if (parse_access_tag_list(input, parsed, &parsed_count, false)) {
+                        bool has_admin = false;
+                        for (int i = 0; i < parsed_count; i++)
+                            if (strcmp(parsed[i], "admin") == 0) has_admin = true;
+                        if (!has_admin) {
+                            snprintf(g_status, sizeof(g_status), "Der admin-Tag muss enthalten bleiben.");
+                        } else {
+                            memcpy(g_access_control.tags, parsed, sizeof(parsed));
+                            g_access_control.tag_count = parsed_count;
+                            for (int resource = 0; resource < 4; resource++) {
+                                int write = 0;
+                                for (int i = 0; i < g_access_control.permission_count[resource]; i++) {
+                                    if (access_tag_index(g_access_control.permissions[resource][i]) >= 0) {
+                                        if (write != i)
+                                            snprintf(g_access_control.permissions[resource][write], 32,
+                                                "%s", g_access_control.permissions[resource][i]);
+                                        write++;
+                                    }
+                                }
+                                g_access_control.permission_count[resource] = write;
+                            }
+                            snprintf(g_status, sizeof(g_status), "Tag-Liste lokal geaendert. Y speichert.");
+                        }
+                    }
+                }
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_Y) {
+                if (save_access_control_native()) load_access_control_native();
+                redraw = true;
+                break;
+            }
+            if (pressed & HidNpadButton_Plus) return;
+            svcSleepThread(16000000ULL);
+        }
+        if (!redraw) break;
+    }
+}
+
 static void show_admin_users(void) {
     if (!load_admin_user_list()) return;
     int selected = 0;
@@ -2994,8 +3337,8 @@ int main(int argc, char *argv[]) {
             }
             draw_profile();
         } else if (g_screen == SCREEN_ADMIN) {
-            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 5) % 6;
-            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 6;
+            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 6) % 7;
+            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 7;
             if (down & HidNpadButton_B) g_screen = SCREEN_ACCOUNT;
             if (down & HidNpadButton_A) {
                 if (!g_account.isAdmin || g_account.disabled) {
@@ -3006,6 +3349,7 @@ int main(int argc, char *argv[]) {
                 else if (g_menu_selection == 2) show_admin_users();
                 else if (g_menu_selection == 3) request_live_publish_native();
                 else if (g_menu_selection == 4) show_admin_leaderboard();
+                else if (g_menu_selection == 5) show_access_control_native();
                 else g_screen = SCREEN_ACCOUNT;
             }
             draw_admin();
