@@ -80,6 +80,7 @@ typedef struct {
     int reportCount;
     bool classwork;
     bool legacy;
+    bool has_image;
 } LessonEntry;
 
 typedef struct {
@@ -1477,7 +1478,16 @@ static void parse_lesson_documents(const char *json, bool classwork, bool legacy
             firestore_field_string(json, t, n, fields, "author", author, sizeof(author));
         }
         int reports = classwork ? 0 : firestore_field_int(json, t, n, fields, "reportCount");
+        bool has_image = false;
+        if (!classwork) {
+            int images_wrapper = json_object_get(json, t, n, fields, "images");
+            int images_array = json_object_get(json, t, n, images_wrapper, "arrayValue");
+            int images_values = json_object_get(json, t, n, images_array, "values");
+            has_image = images_values >= 0 && t[images_values].type == 'a'
+                && json_array_get(t, n, images_values, 0) >= 0;
+        }
         add_entry(id, title, author, reports, classwork, legacy);
+        if (g_entry_count > 0) g_entries[g_entry_count - 1].has_image = has_image;
     }
     free(t);
 }
@@ -1996,7 +2006,8 @@ static void draw_lesson(void) {
         ui_card(270, y, 590, 57, selected);
         ui_text(286, y + 12, g_entries[i].title, 1, selected ? UI_CYAN : UI_TEXT);
         if (g_entries[i].author[0]) ui_text(286, y + 34, g_entries[i].author, 1, UI_MUTED);
-        if (g_entries[i].legacy) ui_badge(738, y + 15, 100, "ALT", UI_SURFACE_2, UI_YELLOW);
+        if (g_entries[i].legacy) ui_badge(650, y + 15, 72, "ALT", UI_SURFACE_2, UI_YELLOW);
+        if (g_entries[i].has_image) ui_badge(738, y + 15, 100, "BILD", UI_SURFACE_2, UI_CYAN);
         hw_row++;
         if (hw_row >= 5) break;
     }
