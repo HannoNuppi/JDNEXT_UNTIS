@@ -19,6 +19,7 @@
 #define TOBI_PROJECT "tobiservices"
 #define OLD_PROJECT "next-untis-plus"
 #define TOBI_API_KEY "AIzaSyCwVh8-JIm-pj8N8bOWgwz8-G_cLQ6AVuQ"
+#define OLD_API_KEY "AIzaSyBgkWUtFIH63yJUw4zTbNtplKL5HqDDXMg"
 #define MAX_JSON_TOKENS 12000
 #define MAX_ENTRIES 24
 #define HTTP_LIMIT (768 * 1024)
@@ -48,11 +49,19 @@ typedef struct {
 } Account;
 
 typedef struct {
+    char id[128];
     char title[280];
     char author[96];
+    int reportCount;
     bool classwork;
     bool legacy;
 } LessonEntry;
+
+typedef struct {
+    char idToken[4096];
+    char uid[160];
+    bool valid;
+} GuestSession;
 
 typedef enum {
     SCREEN_TIMETABLE = 0,
@@ -62,6 +71,9 @@ typedef enum {
 } Screen;
 
 static Account g_account;
+static GuestSession g_guestTobi;
+static GuestSession g_guestOld;
+static unsigned long g_write_counter = 0;
 static bool g_socket_initialized = false;
 static bool g_maintenance = false;
 static char g_maintenance_message[500];
@@ -443,6 +455,267 @@ static bool firestore_list(const char *project, const char *path, const char *to
     return http_request(url, "GET", NULL, token, out);
 }
 
+static bool firestore_commit(const char *project, const char *body,
+                             const char *token, HttpResponse *out) {
+    char url[500];
+    snprintf(url, sizeof(url),
+        "https://firestore.googleapis.com/v1/projects/%s/databases/(default)/documents:commit",
+        project);
+    return http_request(url, "POST", body, token, out);
+}
+
+static bool firebase_anonymous_session(const char *api_key, GuestSession *session) {
+    if (session->valid && session->idToken[0] && session->uid[0]) return true;
+
+    char url[300];
+    snprintf(url, sizeof(url),
+        "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=%s", api_key);
+
+    HttpResponse r;
+    if (!http_request(url, "POST", "{\\"returnSecureToken\\":true}", NULL, &r)) {
+        snprintf(g_status, sizeof(g_status),
+            "Gast-Anmeldung fehlgeschlagen (HTTP %ld).", r.status);
+        http_response_free(&r);
+        return false;
+    }
+
+    JsonToken *tokens = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!tokens) {
+        http_response_free(&r);
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer die Gast-Anmeldung.");
+        return false;
+    }
+
+    int count = 0;
+    int root = json_parse(r.data, tokens, &count);
+    if (root >= 0) {
+        json_get_string(r.data, tokens, count, root, "idToken",
+                        session->idToken, sizeof(session->idToken));
+        json_get_string(r.data, tokens, count, root, "localId",
+                        session->uid, sizeof(session->uid));
+    }
+    free(tokens);
+    http_response_free(&r);
+
+    session->valid = session->idToken[0] != 0 && session->uid[0] != 0;
+    if (!session->valid) {
+        memset(session, 0, sizeof(*session));
+        snprintf(g_status, sizeof(g_status), "Firebase lieferte keine gueltige Gast-Sitzung.");
+        return false;
+    }
+    return true;
+}
+
+static void make_document_id(char *out, size_t cap) {
+    unsigned long now = (unsigned long)time(NULL);
+    g_write_counter++;
+    snprintf(out, cap, "sw-%lu-%lu", now, g_write_counter);
+}
+
+static bool save_classwork_entry(const char *hw_key, const char *title) {
+    const char *clean = title ? title : "";
+    size_t title_len = strlen(clean);
+    if (title_len < 2 || title_len > 120) {
+        snprintf(g_status, sizeof(g_status), "Die Bezeichnung muss 2 bis 120 Zeichen lang sein.");
+        return false;
+    }
+
+    if (!firebase_anonymous_session(OLD_API_KEY, &g_guestOld)) return false;
+
+    char safe_title[300], id[128], body[2600];
+    json_escape(clean, safe_title, sizeof(safe_title));
+    make_document_id(id, sizeof(id));
+
+    int needed = snprintf(body, sizeof(body),
+        "{\\"writes\\":[{"
+          "\\"update\\":{"
+            "\\"name\\":\\"projects/%s/databases/(default)/documents/classwork/%s/entries/%s\\","
+            "\\"fields\\":{"
+              "\\"title\\":{\\"stringValue\\":\\"%s\\"},"
+              "\\"createdBy\\":{\\"stringValue\\":\\"%s\\"}"
+            "}"
+          "},"
+          "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
+            "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
+          "\\"currentDocument\\":{\\"exists\\":false}"
+        "}]}",
+        OLD_PROJECT, hw_key, id, safe_title, g_guestOld.uid);
+
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Klassenarbeit ist zu lang.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(OLD_PROJECT, body, g_guestOld.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Klassenarbeit abgelehnt (HTTP %ld).", response.status);
+    } else {
+        snprintf(g_status, sizeof(g_status), "Klassenarbeit wurde eingetragen.");
+    }
+    http_response_free(&response);
+    return ok;
+}
+
+static bool save_homework_entry(const char *hw_key, const char *text,
+                                const char *author) {
+    const char *clean_text = text ? text : "";
+    const char *clean_author = author ? author : "";
+    size_t text_len = strlen(clean_text), author_len = strlen(clean_author);
+    if (text_len < 3 || text_len > 1000 || author_len > 80) {
+        snprintf(g_status, sizeof(g_status),
+            "Hausaufgabe: 3 bis 1000 Zeichen; Name maximal 80 Zeichen.");
+        return false;
+    }
+
+    const char *token = NULL;
+    const char *auth_uid = NULL;
+    bool reward = false;
+    if (g_account.signedIn) {
+        token = g_account.idToken;
+        auth_uid = g_account.uid;
+        reward = !g_account.disabled && g_account.goldCoins > -50;
+    } else {
+        if (!firebase_anonymous_session(TOBI_API_KEY, &g_guestTobi)) return false;
+        token = g_guestTobi.idToken;
+        auth_uid = g_guestTobi.uid;
+    }
+
+    char safe_text[2100], safe_author[200], entry_id[128], body[14000];
+    char event_id[256];
+    json_escape(clean_text, safe_text, sizeof(safe_text));
+    json_escape(clean_author, safe_author, sizeof(safe_author));
+    make_document_id(entry_id, sizeof(entry_id));
+    snprintf(event_id, sizeof(event_id), "reward-%s-%s", hw_key, entry_id);
+
+    int needed;
+    if (reward) {
+        needed = snprintf(body, sizeof(body),
+          "{\\"writes\\":["
+            "{\\"update\\":{"
+              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\\","
+              "\\"fields\\":{"
+                "\\"text\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"author\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"images\\":{\\"arrayValue\\":{}},"
+                "\\"reportCount\\":{\\"integerValue\\":\\"0\\"}"
+              "}"
+            "},"
+            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
+              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
+            "\\"currentDocument\\":{\\"exists\\":false}"
+            "},"
+            "{\\"update\\":{"
+              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomeworkPrivate/%s/entries/%s\\","
+              "\\"fields\\":{"
+                "\\"authorAuthUid\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"authorTobiUid\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"authorTobiAccountUid\\":{\\"stringValue\\":\\"%s\\"}"
+              "}"
+            "},"
+            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
+              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
+            "\\"currentDocument\\":{\\"exists\\":false}"
+            "},"
+            "{\\"update\\":{"
+              "\\"name\\":\\"projects/%s/databases/(default)/documents/users/%s\\","
+              "\\"fields\\":{"
+                "\\"lastJdnextCoinEventId\\":{\\"stringValue\\":\\"%s\\"}"
+              "}"
+            "},"
+            "\\"updateMask\\":{\\"fieldPaths\\":[\\"lastJdnextCoinEventId\\"]},"
+            "\\"updateTransforms\\":["
+              "{\\"fieldPath\\":\\"goldCoins\\",\\"increment\\":{\\"integerValue\\":\\"10\\"}},"
+              "{\\"fieldPath\\":\\"lastProfileChangeAt\\",\\"setToServerValue\\":\\"REQUEST_TIME\\"}"
+            "],"
+            "\\"currentDocument\\":{\\"exists\\":true}"
+            "},"
+            "{\\"update\\":{"
+              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextCoinEvents/%s\\","
+              "\\"fields\\":{"
+                "\\"uid\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"amount\\":{\\"integerValue\\":\\"10\\"},"
+                "\\"type\\":{\\"stringValue\\":\\"homework-post\\"},"
+                "\\"hwKey\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"entryId\\":{\\"stringValue\\":\\"%s\\"}"
+              "}"
+            "},"
+            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
+              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
+            "\\"currentDocument\\":{\\"exists\\":false}"
+          "}"
+          "]}", 
+          TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author,
+          TOBI_PROJECT, hw_key, entry_id, auth_uid, auth_uid, auth_uid,
+          TOBI_PROJECT, auth_uid, event_id,
+          TOBI_PROJECT, event_id, auth_uid, hw_key, entry_id);
+    } else {
+        needed = snprintf(body, sizeof(body),
+          "{\\"writes\\":["
+            "{\\"update\\":{"
+              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomework/%s/entries/%s\\","
+              "\\"fields\\":{"
+                "\\"text\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"author\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"images\\":{\\"arrayValue\\":{}},"
+                "\\"reportCount\\":{\\"integerValue\\":\\"0\\"}"
+              "}"
+            "},"
+            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
+              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
+            "\\"currentDocument\\":{\\"exists\\":false}"
+            "},"
+            "{\\"update\\":{"
+              "\\"name\\":\\"projects/%s/databases/(default)/documents/jdnextHomeworkPrivate/%s/entries/%s\\","
+              "\\"fields\\":{"
+                "\\"authorAuthUid\\":{\\"stringValue\\":\\"%s\\"},"
+                "\\"authorTobiUid\\":{\\"nullValue\\":null},"
+                "\\"authorTobiAccountUid\\":%s"
+              "}"
+            "},"
+            "\\"updateTransforms\\":[{\\"fieldPath\\":\\"createdAt\\","
+              "\\"setToServerValue\\":\\"REQUEST_TIME\\"}],"
+            "\\"currentDocument\\":{\\"exists\\":false}"
+          "}"
+          "]}", TOBI_PROJECT, hw_key, entry_id, safe_text, safe_author,
+          TOBI_PROJECT, hw_key, entry_id, auth_uid,
+          g_account.signedIn ? "{\\"stringValue\\":\\"account\\\"}" : "{\\"nullValue\\":null}");
+        /* Keep a signed-in but non-rewarding account UID distinct from the anonymous guest case. */
+        if (g_account.signedIn) {
+            char owner_uid[200];
+            snprintf(owner_uid, sizeof(owner_uid), "{\\"stringValue\\":\\"%s\\"}", auth_uid);
+            char *placeholder = strstr(body, "{\\"stringValue\\":\\"account\\"}");
+            if (placeholder) {
+                char tail[12000];
+                snprintf(tail, sizeof(tail), "%s", placeholder + strlen("{\\"stringValue\\":\\"account\\"}"));
+                snprintf(placeholder, sizeof(body) - (size_t)(placeholder - body), "%s%s", owner_uid, tail);
+                needed = (int)strlen(body);
+            }
+        }
+    }
+
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Hausaufgabe konnte nicht vorbereitet werden (zu gross).");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, token, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Hausaufgabe abgelehnt (HTTP %ld).", response.status);
+        if (response.data && strstr(response.data, "message")) {
+            strncat(g_status, " Firestore-Regeln oder Anmeldung pruefen.",
+                sizeof(g_status) - strlen(g_status) - 1);
+        }
+    } else {
+        snprintf(g_status, sizeof(g_status), reward
+            ? "Gespeichert: +10 Goldmuenzen."
+            : "Hausaufgabe gespeichert und live geteilt.");
+    }
+    http_response_free(&response);
+    return ok;
+}
+
 static bool call_function(const char *name, const char *data_json, HttpResponse *out) {
     if (!g_account.signedIn || !g_account.idToken[0]) {
         snprintf(g_status, sizeof(g_status), "Bitte zuerst mit TobiServices anmelden.");
@@ -558,11 +831,14 @@ static void format_date(struct tm d, char *out, size_t cap) {
 }
 
 /* ---------------------------- Lesson data ------------------------------ */
-static void add_entry(const char *title, const char *author, bool classwork, bool legacy) {
+static void add_entry(const char *id, const char *title, const char *author,
+                        int report_count, bool classwork, bool legacy) {
     if (g_entry_count >= MAX_ENTRIES || !title[0]) return;
     LessonEntry *e = &g_entries[g_entry_count++];
+    snprintf(e->id, sizeof(e->id), "%s", id ? id : "");
     snprintf(e->title, sizeof(e->title), "%s", title);
     snprintf(e->author, sizeof(e->author), "%s", author ? author : "");
+    e->reportCount = report_count;
     e->classwork = classwork;
     e->legacy = legacy;
 }
@@ -577,14 +853,18 @@ static void parse_lesson_documents(const char *json, bool classwork, bool legacy
         int doc = json_array_get(t, n, docs, i);
         if (doc < 0) break;
         int fields = json_object_get(json, t, n, doc, "fields");
-        char title[300] = "", author[100] = "";
+        char title[300] = "", author[100] = "", full_name[420] = "", id[128] = "";
+        json_get_string(json, t, n, doc, "name", full_name, sizeof(full_name));
+        const char *last_slash = strrchr(full_name, '/');
+        if (last_slash) snprintf(id, sizeof(id), "%s", last_slash + 1);
         if (classwork) {
             firestore_field_string(json, t, n, fields, "title", title, sizeof(title));
         } else {
             firestore_field_string(json, t, n, fields, "text", title, sizeof(title));
             firestore_field_string(json, t, n, fields, "author", author, sizeof(author));
         }
-        add_entry(title, author, classwork, legacy);
+        int reports = classwork ? 0 : firestore_field_int(json, t, n, fields, "reportCount");
+        add_entry(id, title, author, reports, classwork, legacy);
     }
     free(t);
 }
