@@ -115,6 +115,15 @@ static Screen g_screen = SCREEN_TIMETABLE;
 static LessonEntry g_entries[MAX_ENTRIES];
 static int g_entry_count = 0;
 
+/* Forward declarations shared by authentication, UI and account actions. */
+static void refresh_profile(void);
+static void logout_account(void);
+static bool keyboard_input(const char *header, const char *guide, bool password,
+                           char *out, size_t cap);
+static void draw_loading(const char *message);
+static bool firestore_commit(const char *project, const char *body,
+                             const char *token, HttpResponse *out);
+
 static const char *DAY_NAMES[5] = {
     "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"
 };
