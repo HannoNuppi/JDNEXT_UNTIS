@@ -48,6 +48,9 @@ typedef struct {
     char equippedTheme[64];
     char profileTitle[64];
     char profileIcon[32];
+    int adventYear;
+    int adventDoors[24];
+    int adventDoorCount;
     long long goldCoins;
     bool disabled;
     bool signedIn;
@@ -100,7 +103,8 @@ typedef enum {
     SCREEN_ACCOUNT,
     SCREEN_ADMIN,
     SCREEN_THEMES,
-    SCREEN_PROFILE
+    SCREEN_PROFILE,
+    SCREEN_ADVENT
 } Screen;
 
 static Account g_account;
@@ -121,6 +125,7 @@ static int g_period = 0;
 static int g_menu_selection = 0;
 static int g_profile_title_selection = 0;
 static int g_profile_icon_selection = 0;
+static int g_advent_selection = 0;
 static Screen g_screen = SCREEN_TIMETABLE;
 static LessonEntry g_entries[MAX_ENTRIES];
 static int g_entry_count = 0;
@@ -1080,6 +1085,28 @@ static void refresh_profile(void) {
         g_account.profileTitle, sizeof(g_account.profileTitle));
     firestore_field_string(r.data, t, n, fields, "profileIcon",
         g_account.profileIcon, sizeof(g_account.profileIcon));
+    g_account.adventYear = (int)firestore_field_int(r.data, t, n, fields, "adventYear");
+    g_account.adventDoorCount = 0;
+    int advent_wrapper = json_object_get(r.data, t, n, fields, "adventDoors");
+    int advent_array = json_object_get(r.data, t, n, advent_wrapper, "arrayValue");
+    int advent_values = json_object_get(r.data, t, n, advent_array, "values");
+    if (advent_values >= 0 && t[advent_values].type == 'a') {
+        for (int i = 0; i < 24; i++) {
+            int item = json_array_get(t, n, advent_values, i);
+            if (item < 0) break;
+            int number = json_object_get(r.data, t, n, item, "integerValue");
+            if (number < 0) break;
+            char value[20] = "";
+            size_t len = (size_t)(t[number].end - t[number].start);
+            if (!len || len >= sizeof(value)) continue;
+            memcpy(value, r.data + t[number].start, len);
+            value[len] = 0;
+            int day = atoi(value);
+            if (day >= 1 && day <= 24) {
+                g_account.adventDoors[g_account.adventDoorCount++] = day;
+            }
+        }
+    }
     ui_set_theme(g_account.equippedTheme[0] ? g_account.equippedTheme : "Next");
     int tags_wrapper = json_object_get(r.data, t, n, fields, "tags");
     int tags_array = json_object_get(r.data, t, n, tags_wrapper, "arrayValue");
@@ -1401,6 +1428,171 @@ static bool purchase_theme_native(const ThemeOption *theme) {
     }
     http_response_free(&response);
     return ok;
+}
+
+
+static void berlin_date(int *year, int *month, int *day) {
+    time_t berlin_time = time(NULL) + 3600; /* Advent rules use fixed CET (UTC+1). */
+    struct tm *date = gmtime(&berlin_time);
+    if (!date) {
+        *year = 0; *month = 0; *day = 0;
+        return;
+    }
+    *year = date->tm_year + 1900;
+    *month = date->tm_mon + 1;
+    *day = date->tm_mday;
+}
+
+static bool advent_door_is_open(int year, int day) {
+    if (g_account.adventYear != year) return false;
+    for (int i = 0; i < g_account.adventDoorCount; i++)
+        if (g_account.adventDoors[i] == day) return true;
+    return false;
+}
+
+static bool open_advent_door_native(int day) {
+    if (!g_account.signedIn || g_account.disabled) {
+        snprintf(g_status, sizeof(g_status), "Der Adventskalender benoetigt ein aktives TobiServices-Konto.");
+        return false;
+    }
+
+    int year, month, today;
+    berlin_date(&year, &month, &today);
+    if (month != 12 || today < 1 || today > 24) {
+        snprintf(g_status, sizeof(g_status), "Der Adventskalender ist nur vom 1. bis 24. Dezember geoeffnet.");
+        return false;
+    }
+    if (day != today) {
+        snprintf(g_status, sizeof(g_status), "Nur Tuer %d darf heute geoeffnet werden.", today);
+        return false;
+    }
+    if (advent_door_is_open(year, day)) {
+        snprintf(g_status, sizeof(g_status), "Diese Tuer wurde bereits geoeffnet.");
+        return false;
+    }
+
+    int new_doors[24];
+    int new_count = 0;
+    if (g_account.adventYear == year) {
+        for (int i = 0; i < g_account.adventDoorCount && new_count < 24; i++) {
+            int current = g_account.adventDoors[i];
+            if (current >= 1 && current <= 24 && current != day) {
+                new_doors[new_count++] = current;
+            }
+        }
+    }
+    if (new_count >= 24) {
+        snprintf(g_status, sizeof(g_status), "Alle Advent-Tueren sind bereits geoeffnet.");
+        return false;
+    }
+    new_doors[new_count++] = day;
+    for (int i = 0; i < new_count; i++) {
+        for (int j = i + 1; j < new_count; j++) {
+            if (new_doors[j] < new_doors[i]) {
+                int tmp = new_doors[i];
+                new_doors[i] = new_doors[j];
+                new_doors[j] = tmp;
+            }
+        }
+    }
+
+    bool grant_winter = day == 1 && !account_owns_theme("WinterEvent");
+    bool all_open = new_count == 24;
+    for (int d = 1; d <= 24; d++) {
+        bool found = false;
+        for (int i = 0; i < new_count; i++) if (new_doors[i] == d) found = true;
+        if (!found) all_open = false;
+    }
+    bool grant_winter_gold = day == 24 && all_open
+        && !account_owns_theme("WinterGoldEvent");
+
+    char doors_json[800] = "{\"arrayValue\":{\"values\":[";
+    for (int i = 0; i < new_count; i++) {
+        char value[24];
+        snprintf(value, sizeof(value), "%s{\"integerValue\":\"%d\"}",
+            i ? "," : "", new_doors[i]);
+        strncat(doors_json, value, sizeof(doors_json) - strlen(doors_json) - 1);
+    }
+    strncat(doors_json, "]}}", sizeof(doors_json) - strlen(doors_json) - 1);
+
+    char owned_json[3000];
+    const char *extra_theme = grant_winter ? "WinterEvent"
+        : (grant_winter_gold ? "WinterGoldEvent" : NULL);
+    if (!build_owned_themes_json(extra_theme, owned_json, sizeof(owned_json))) {
+        snprintf(g_status, sizeof(g_status), "Deine Theme-Liste konnte nicht aktualisiert werden.");
+        return false;
+    }
+
+    char body[5200];
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+            "\"fields\":{"
+              "\"adventYear\":{\"integerValue\":\"%d\"},"
+              "\"adventDoors\":%s,"
+              "\"ownedThemes\":%s"
+            "}"
+          "},"
+          "\"updateMask\":{\"fieldPaths\":[\"adventYear\",\"adventDoors\",\"ownedThemes\"]},"
+          "\"updateTransforms\":[{\"fieldPath\":\"lastProfileChangeAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}],"
+          "\"currentDocument\":{\"exists\":true}"
+        "}]}",
+        TOBI_PROJECT, g_account.uid, year, doors_json, owned_json);
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Advent-Tuer konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status),
+            "Advent-Tuer wurde abgelehnt (HTTP %ld). Firestore prueft das Datum selbst.",
+            response.status);
+    } else {
+        snprintf(g_status, sizeof(g_status), "Tuer %d geoeffnet%s%s.",
+            day, grant_winter ? " - Winterwunder freigeschaltet" : "",
+            grant_winter_gold ? " - Winter Gold freigeschaltet" : "");
+        refresh_profile();
+    }
+    http_response_free(&response);
+    return ok;
+}
+
+static void draw_advent_calendar(void) {
+    ui_begin();
+    draw_sidebar("KONTO");
+    int year, month, today;
+    berlin_date(&year, &month, &today);
+    char subtitle[120];
+    snprintf(subtitle, sizeof(subtitle), "DEZEMBER %d  |  %d/24 TUEREN GEOEFFNET",
+        year, g_account.adventYear == year ? g_account.adventDoorCount : 0);
+    draw_top_header("ADVENTSKALENDER", subtitle);
+
+    for (int door = 1; door <= 24; door++) {
+        int row = (door - 1) / 6;
+        int column = (door - 1) % 6;
+        int x = 252 + column * 166;
+        int y = 154 + row * 112;
+        bool open = advent_door_is_open(year, door);
+        bool selected = g_advent_selection == door - 1;
+        bool is_today = month == 12 && today == door;
+        ui_card(x, y, 150, 94, selected);
+        ui_badge(x + 10, y + 10, 130,
+            open ? "GEOEFFNET" : (is_today ? "HEUTE" : "GESCHLOSSEN"),
+            open ? UI_GREEN : (is_today ? UI_CYAN : UI_SURFACE_2),
+            open || is_today ? UI_BG : UI_MUTED);
+        char day_text[12];
+        snprintf(day_text, sizeof(day_text), "%02d", door);
+        ui_text_center(x + 10, y + 51, 130, day_text, 3,
+            open ? UI_GREEN : (is_today ? UI_CYAN : UI_TEXT));
+    }
+    ui_text(252, 629, "A HEUTIGE TUER OEFFNEN  |  Y AKTUALISIEREN  |  B ZURUECK",
+            1, UI_MUTED);
+    draw_status_bar();
+    ui_end();
 }
 
 static bool save_profile_cosmetics_native(void) {
