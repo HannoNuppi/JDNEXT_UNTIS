@@ -569,6 +569,149 @@ static bool firebase_sign_in(const char *email, const char *password) {
     return true;
 }
 
+static bool firebase_create_account(const char *display_name,
+                                    const char *email, const char *password) {
+    size_t name_len = strlen(display_name);
+    size_t email_len = strlen(email);
+    size_t password_len = strlen(password);
+    if (!name_len || name_len > 80 || !email_len || email_len > 254
+        || password_len < 8 || password_len > 128 || !strchr(email, '@')) {
+        snprintf(g_status, sizeof(g_status),
+            "Name/E-Mail ungueltig oder Passwort nicht zwischen 8 und 128 Zeichen.");
+        return false;
+    }
+
+    char safe_name[220], safe_email[520], safe_password[600], body[1400], url[300];
+    json_escape(display_name, safe_name, sizeof(safe_name));
+    json_escape(email, safe_email, sizeof(safe_email));
+    json_escape(password, safe_password, sizeof(safe_password));
+    snprintf(url, sizeof(url),
+        "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=%s", TOBI_API_KEY);
+    snprintf(body, sizeof(body),
+        "{\"email\":\"%s\",\"password\":\"%s\",\"returnSecureToken\":true}",
+        safe_email, safe_password);
+
+    HttpResponse response;
+    if (!http_request(url, "POST", body, NULL, &response)) {
+        snprintf(g_status, sizeof(g_status), "Konto konnte nicht erstellt werden (HTTP %ld).",
+            response.status);
+        http_response_free(&response);
+        memset(safe_password, 0, sizeof(safe_password));
+        return false;
+    }
+
+    JsonToken *tokens = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
+    if (!tokens) {
+        http_response_free(&response);
+        memset(safe_password, 0, sizeof(safe_password));
+        snprintf(g_status, sizeof(g_status), "Nicht genug Speicher fuer die Kontoerstellung.");
+        return false;
+    }
+    int count = 0;
+    int root = json_parse(response.data, tokens, &count);
+    if (root >= 0) {
+        json_get_string(response.data, tokens, count, root, "idToken",
+                        g_account.idToken, sizeof(g_account.idToken));
+        json_get_string(response.data, tokens, count, root, "refreshToken",
+                        g_account.refreshToken, sizeof(g_account.refreshToken));
+        json_get_string(response.data, tokens, count, root, "localId",
+                        g_account.uid, sizeof(g_account.uid));
+        json_get_string(response.data, tokens, count, root, "email",
+                        g_account.email, sizeof(g_account.email));
+    }
+    free(tokens);
+    http_response_free(&response);
+    memset(safe_password, 0, sizeof(safe_password));
+
+    if (!g_account.idToken[0] || !g_account.uid[0]) {
+        memset(&g_account, 0, sizeof(g_account));
+        snprintf(g_status, sizeof(g_status), "Firebase lieferte kein gueltiges neues Konto.");
+        return false;
+    }
+
+    snprintf(url, sizeof(url),
+        "https://identitytoolkit.googleapis.com/v1/accounts:update?key=%s", TOBI_API_KEY);
+    int needed = snprintf(body, sizeof(body),
+        "{\"idToken\":\"%s\",\"displayName\":\"%s\",\"returnSecureToken\":true}",
+        g_account.idToken, safe_name);
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Profilname ist zu lang.");
+        memset(&g_account, 0, sizeof(g_account));
+        return false;
+    }
+    if (!http_request(url, "POST", body, NULL, &response)) {
+        snprintf(g_status, sizeof(g_status), "Firebase-Profilname konnte nicht gespeichert werden (HTTP %ld).",
+            response.status);
+        http_response_free(&response);
+        memset(&g_account, 0, sizeof(g_account));
+        return false;
+    }
+    http_response_free(&response);
+
+    snprintf(g_account.displayName, sizeof(g_account.displayName), "%s", display_name);
+    g_account.signedIn = true;
+
+    char safe_uid[400], profile_body[1800];
+    json_escape(g_account.uid, safe_uid, sizeof(safe_uid));
+    needed = snprintf(profile_body, sizeof(profile_body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+            "\"fields\":{"
+              "\"email\":{\"stringValue\":\"%s\"},"
+              "\"displayName\":{\"stringValue\":\"%s\"},"
+              "\"tags\":{\"arrayValue\":{\"values\":[]}},"
+              "\"goldCoins\":{\"integerValue\":\"0\"},"
+              "\"authProvider\":{\"stringValue\":\"firebase-auth\"}"
+            "}"
+          "},"
+          "\"updateTransforms\":["
+            "{\"fieldPath\":\"createdAt\",\"setToServerValue\":\"REQUEST_TIME\"},"
+            "{\"fieldPath\":\"lastProfileChangeAt\",\"setToServerValue\":\"REQUEST_TIME\"}"
+          "],"
+          "\"currentDocument\":{\"exists\":false}"
+        "}]}",
+        TOBI_PROJECT, safe_uid, safe_email, safe_name);
+
+    if (needed < 0 || (size_t)needed >= sizeof(profile_body)) {
+        snprintf(g_status, sizeof(g_status), "Konto erstellt, aber Profil konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    if (!firestore_commit(TOBI_PROJECT, profile_body, g_account.idToken, &response)) {
+        snprintf(g_status, sizeof(g_status),
+            "Konto erstellt, Profilinitialisierung fehlgeschlagen (HTTP %ld).",
+            response.status);
+        http_response_free(&response);
+        return false;
+    }
+    http_response_free(&response);
+    refresh_profile();
+    if (g_account.disabled) {
+        logout_account();
+        snprintf(g_status, sizeof(g_status), "Das neue Konto wurde als gesperrt markiert.");
+        return false;
+    }
+    snprintf(g_status, sizeof(g_status), "TobiServices-Konto erstellt und angemeldet.");
+    return true;
+}
+
+static void do_create_account(void) {
+    char display_name[81] = "";
+    char email[255] = "";
+    char password[129] = "";
+    if (!keyboard_input("Konto erstellen", "Anzeigename", false,
+                        display_name, sizeof(display_name))) return;
+    if (!keyboard_input("Konto erstellen", "E-Mail-Adresse", false,
+                        email, sizeof(email))) return;
+    if (!keyboard_input("Konto erstellen", "Passwort (mindestens 8 Zeichen)", true,
+                        password, sizeof(password))) return;
+    draw_loading("Erstelle dein TobiServices-Konto ...");
+    bool ok = firebase_create_account(display_name, email, password);
+    memset(password, 0, sizeof(password));
+    if (!ok && !g_account.signedIn) return;
+}
+
 static bool firestore_get(const char *project, const char *path, const char *token,
                           HttpResponse *out) {
     char url[1500];
@@ -1486,6 +1629,7 @@ static void draw_account(void) {
     const char *guest_items[] = {
         "THEMES ANSEHEN",
         "MIT TOBISERVICES ANMELDEN",
+        "KONTO ERSTELLEN",
         "ZURUECK ZUM STUNDENPLAN"
     };
     const char *user_items[] = {
@@ -2390,7 +2534,7 @@ int main(int argc, char *argv[]) {
             }
             draw_lesson();
         } else if (g_screen == SCREEN_ACCOUNT) {
-            int max_items = !g_account.signedIn ? 3 : (g_account.isAdmin ? 4 : 3);
+            int max_items = !g_account.signedIn ? 4 : (g_account.isAdmin ? 4 : 3);
             if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + max_items - 1) % max_items;
             if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % max_items;
             if (down & HidNpadButton_B) g_screen = SCREEN_TIMETABLE;
@@ -2401,6 +2545,8 @@ int main(int argc, char *argv[]) {
                         g_menu_selection = 0;
                     } else if (g_menu_selection == 1) {
                         do_login();
+                    } else if (g_menu_selection == 2) {
+                        do_create_account();
                     } else {
                         g_screen = SCREEN_TIMETABLE;
                     }
