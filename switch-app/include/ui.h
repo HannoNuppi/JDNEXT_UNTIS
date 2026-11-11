@@ -11,6 +11,18 @@ typedef struct {
 bool ui_init(void);
 void ui_shutdown(void);
 bool ui_ready(void);
+void ui_set_theme(const char *theme_id);
+UiColor ui_color_bg(void);
+UiColor ui_color_surface(void);
+UiColor ui_color_surface_2(void);
+UiColor ui_color_border(void);
+UiColor ui_color_text(void);
+UiColor ui_color_muted(void);
+UiColor ui_color_cyan(void);
+UiColor ui_color_purple(void);
+UiColor ui_color_green(void);
+UiColor ui_color_yellow(void);
+UiColor ui_color_red(void);
 void ui_begin(void);
 void ui_end(void);
 void ui_fill(UiColor color);
@@ -23,16 +35,16 @@ void ui_badge(int x, int y, int w, const char *text, UiColor bg, UiColor fg);
 void ui_separator(int x, int y, int w, UiColor color);
 
 #define UI_RGB(r,g,b) ((UiColor){(r),(g),(b),255})
-#define UI_BG          UI_RGB(10, 15, 30)
-#define UI_SURFACE     UI_RGB(18, 27, 48)
-#define UI_SURFACE_2   UI_RGB(25, 37, 63)
-#define UI_BORDER      UI_RGB(44, 59, 88)
-#define UI_TEXT        UI_RGB(236, 242, 255)
-#define UI_MUTED       UI_RGB(145, 161, 190)
-#define UI_CYAN        UI_RGB(93, 224, 242)
-#define UI_PURPLE      UI_RGB(145, 124, 255)
-#define UI_GREEN       UI_RGB(84, 214, 160)
-#define UI_YELLOW      UI_RGB(250, 204, 105)
-#define UI_RED         UI_RGB(255, 112, 128)
+#define UI_BG          ui_color_bg()
+#define UI_SURFACE     ui_color_surface()
+#define UI_SURFACE_2   ui_color_surface_2()
+#define UI_BORDER      ui_color_border()
+#define UI_TEXT        ui_color_text()
+#define UI_MUTED       ui_color_muted()
+#define UI_CYAN        ui_color_cyan()
+#define UI_PURPLE      ui_color_purple()
+#define UI_GREEN       ui_color_green()
+#define UI_YELLOW      ui_color_yellow()
+#define UI_RED         ui_color_red()
 
 #endif
