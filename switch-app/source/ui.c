@@ -61,7 +61,7 @@ static void glyph(char c, uint8_t out[5]) {
         case '\\': out[0]=0x01; out[1]=0x06; out[2]=0x18; out[3]=0x60; break;
         case '!': out[2]=0x5F; break;
         case '?': out[0]=0x02; out[1]=0x01; out[2]=0x59; out[3]=0x09; out[4]=0x06; break;
-        case ''': out[2]=0x07; break;
+        case 39: out[2]=0x07; break;
         case '"': out[1]=0x07; out[3]=0x07; break;
         case '(': out[1]=0x1C; out[2]=0x22; out[3]=0x41; break;
         case ')': out[1]=0x41; out[2]=0x22; out[3]=0x1C; break;
