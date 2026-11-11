@@ -16,16 +16,16 @@ INCLUDES    := include
 
 APP_TITLE   := Untis Next Native
 APP_AUTHOR  := TobiServices
-APP_VERSION := 1.1.0
+APP_VERSION := 1.2.0
 NO_ICON     := 1
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS := -g -Wall -Wextra -O2 -ffunction-sections $(ARCH) $(DEFINES)
-CFLAGS += $(INCLUDE) -D__SWITCH__
+CFLAGS += $(INCLUDE) -D__SWITCH__ $(shell sdl2-config --cflags)
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS := -g $(ARCH)
 LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LIBS := -lcurl -lz -lnx
+LIBS := -lcurl -lz $(shell sdl2-config --libs) -lnx
 LIBDIRS := $(PORTLIBS) $(LIBNX)
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
