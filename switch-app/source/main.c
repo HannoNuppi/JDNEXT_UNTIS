@@ -7,6 +7,7 @@
 #include <time.h>
 #include <ctype.h>
 #include <strings.h>
+#include "ui.h"
 
 /*
  * Untis Next native Nintendo Switch client.
@@ -613,161 +614,251 @@ static void load_lesson_entries(void) {
     http_response_free(&r);
 }
 
-/* ------------------------------ UI ------------------------------------- */
-static void clear_screen(void) {
-    printf("\x1b[2J\x1b[H");
+/* ------------------------------ Native UI ------------------------------ */
+static void draw_sidebar(const char *active) {
+    ui_rect(0, 0, 220, 720, UI_SURFACE);
+    ui_rect(0, 0, 5, 720, UI_CYAN);
+    ui_rect(20, 24, 54, 54, UI_SURFACE_2);
+    ui_outline(20, 24, 54, 54, UI_CYAN);
+    ui_text(32, 42, "UN", 3, UI_CYAN);
+    ui_text(86, 28, "UNTIS", 2, UI_TEXT);
+    ui_text(86, 54, "NEXT", 2, UI_PURPLE);
+    ui_separator(18, 98, 184, UI_BORDER);
+
+    const char *items[] = { "STUNDENPLAN", "KONTO", "ADMIN" };
+    const int ys[] = { 126, 180, 234 };
+    for (int i = 0; i < 3; i++) {
+        bool selected = strcmp(active, items[i]) == 0;
+        if (selected) {
+            ui_rect(16, ys[i] - 9, 188, 42, UI_SURFACE_2);
+            ui_rect(16, ys[i] - 9, 4, 42, UI_CYAN);
+        }
+        ui_text(34, ys[i], items[i], 1, selected ? UI_CYAN : UI_MUTED);
+    }
+
+    ui_card(16, 570, 188, 112, false);
+    ui_text(30, 588, "TOBISERVICES", 1, UI_MUTED);
+    if (g_account.signedIn) {
+        ui_text(30, 612, g_account.displayName[0] ? g_account.displayName : g_account.email, 1, UI_TEXT);
+        ui_text(30, 634, g_account.isAdmin ? "ADMIN" : "ANGEMELDET", 1,
+                g_account.isAdmin ? UI_GREEN : UI_CYAN);
+    } else {
+        ui_text(30, 615, "GASTMODUS", 1, UI_TEXT);
+        ui_text(30, 638, "X: KONTO", 1, UI_MUTED);
+    }
 }
 
-static void print_header(const char *section) {
-    printf("\x1b[1;36m");
-    printf("============================================================\n");
-    printf("                 UNTIS NEXT  |  SWITCH NATIVE\n");
-    printf("============================================================\n");
-    printf("\x1b[0m");
-    printf("\x1b[1;35m%s\x1b[0m\n\n", section);
+static void draw_top_header(const char *title, const char *subtitle) {
+    ui_text(252, 38, title, 3, UI_TEXT);
+    ui_text(254, 86, subtitle, 1, UI_MUTED);
+    ui_separator(252, 120, 996, UI_BORDER);
 }
 
-static void print_footer(void) {
-    printf("\n\x1b[90m");
-    printf("Steuerung: A = Auswaehlen  B = Zurueck  + = Beenden\n");
-    printf("L/R = Woche   Steuerkreuz = Navigation   X = Konto\n");
-    printf("\x1b[0m");
-    printf("\n%s\n", g_status);
-    consoleUpdate(NULL);
+static void draw_status_bar(void) {
+    ui_rect(236, 650, 1044, 70, UI_SURFACE);
+    ui_separator(236, 650, 1044, UI_BORDER);
+    ui_text(254, 677, g_status[0] ? g_status : "Bereit.", 1, UI_MUTED);
+    ui_text(1010, 677, "B ZURUECK  + BEENDEN", 1, UI_CYAN);
+}
+
+static void draw_loading(const char *message) {
+    ui_begin();
+    draw_sidebar("STUNDENPLAN");
+    draw_top_header("UNTIS NEXT", "NATIVE SWITCH-ANWENDUNG");
+    ui_card(360, 250, 570, 170, true);
+    ui_text(405, 294, "BITTE WARTEN", 2, UI_CYAN);
+    ui_text(405, 342, message ? message : "Lade Daten ...", 1, UI_TEXT);
+    ui_rect(405, 378, 470, 4, UI_BORDER);
+    ui_rect(405, 378, 130, 4, UI_PURPLE);
+    draw_status_bar();
+    ui_end();
 }
 
 static void draw_timetable(void) {
-    clear_screen();
-    print_header("STUNDENPLAN");
+    ui_begin();
+    draw_sidebar("STUNDENPLAN");
+    char weekline[120], monday_text[40], friday_text[40], pill[40];
     struct tm friday = date_for_day(4);
-    char monday_text[40], friday_text[40];
     format_date(g_week_monday, monday_text, sizeof(monday_text));
     format_date(friday, friday_text, sizeof(friday_text));
-    printf("Woche: %s - %s     Rhythmus: %s-Woche\n",
-        monday_text, friday_text, is_week_a() ? "A" : "B");
-    printf("Profil: %s\n\n", g_account.signedIn
-        ? (g_account.displayName[0] ? g_account.displayName : g_account.email)
-        : "Gast (oeffentliche Daten)");
+    snprintf(weekline, sizeof(weekline), "%s  -  %s", monday_text, friday_text);
+    snprintf(pill, sizeof(pill), "%s-WOCHE", is_week_a() ? "A" : "B");
+    draw_top_header("STUNDENPLAN", weekline);
+    ui_badge(1050, 42, 150, pill, UI_SURFACE_2, UI_CYAN);
 
-    printf("%-5s", "Std.");
+    const int x0 = 252, y0 = 174;
+    const int time_w = 86, cell_w = 178, gap = 8, head_h = 38, row_h = 58, row_gap = 7;
+    ui_rect(x0, y0, time_w - 8, head_h, UI_SURFACE_2);
+    ui_text(x0 + 20, y0 + 14, "STD.", 1, UI_MUTED);
     for (int d = 0; d < 5; d++) {
+        char header[48], datepart[24];
         struct tm date = date_for_day(d);
-        char dt[24];
-        format_date(date, dt, sizeof(dt));
-        printf(" | %-11s", DAY_SHORT[d]);
+        format_date(date, datepart, sizeof(datepart));
+        snprintf(header, sizeof(header), "%s  %s", DAY_SHORT[d], datepart);
+        int x = x0 + time_w + d * (cell_w + gap);
+        ui_card(x, y0, cell_w, head_h, false);
+        ui_text_center(x + 6, y0 + 14, cell_w - 12, header, 1, UI_TEXT);
     }
-    printf("\n");
-    printf("------------------------------------------------------------\n");
+
     for (int p = 0; p < 6; p++) {
-        printf("\x1b[1;33m%-5s\x1b[0m", PERIOD_LABELS[p]);
+        int y = y0 + head_h + 10 + p * (row_h + row_gap);
+        ui_card(x0, y, time_w - 8, row_h, false);
+        ui_text(x0 + 15, y + 10, PERIOD_LABELS[p], 2, UI_YELLOW);
+        ui_text(x0 + 10, y + 38, PERIOD_TIMES[p], 1, UI_MUTED);
         for (int d = 0; d < 5; d++) {
             const char *subject = subject_for(d, p);
-            char cell[16];
-            snprintf(cell, sizeof(cell), "%s", subject[0] ? subject : "--");
-            if (d == g_day && p == g_period) printf("\x1b[1;42;30m");
-            printf(" | %-11.11s", cell);
-            if (d == g_day && p == g_period) printf("\x1b[0m");
+            bool selected = d == g_day && p == g_period;
+            int x = x0 + time_w + d * (cell_w + gap);
+            ui_card(x, y, cell_w, row_h, selected);
+            if (subject[0]) {
+                ui_text(x + 13, y + 21, subject, 2, selected ? UI_CYAN : UI_TEXT);
+            } else {
+                ui_text(x + 13, y + 23, "FREI", 1, UI_MUTED);
+            }
+            if (selected) ui_badge(x + cell_w - 48, y + 7, 38, "A", UI_CYAN, UI_BG);
         }
-        printf("\n");
-        printf("      %s\n", PERIOD_TIMES[p]);
     }
 
-    printf("\n\x1b[1;33mAusgewaehlt:\x1b[0m %s, %s Stunde - %s\n",
-        DAY_NAMES[g_day], PERIOD_LABELS[g_period], subject_for(g_day, g_period)[0]
-            ? subject_for(g_day, g_period) : "Freistunde");
-    printf("\n");
+    int selected_x = x0 + time_w + g_day * (cell_w + gap);
+    int selected_y = y0 + head_h + 10 + g_period * (row_h + row_gap);
+    (void)selected_x;
+    (void)selected_y;
     if (g_maintenance) {
-        printf("\x1b[1;31mWARTUNG AKTIV\x1b[0m: %s\n",
-            g_maintenance_message[0] ? g_maintenance_message : "Untis Next ist in Wartung.");
-        if (!g_account.isAdmin) {
-            printf("Die Website ist in Wartung; der native Stundenplan zeigt nur lokal konfigurierte Daten.\n");
-        }
+        ui_badge(980, 602, 230, "WARTUNG AKTIV", UI_RED, UI_BG);
+        ui_text(252, 614, g_maintenance_message[0] ? g_maintenance_message : "Untis Next ist momentan in Wartung.",
+                1, UI_RED);
+    } else {
+        ui_text(252, 614, "STEUERKREUZ: STUNDE  |  L/R: WOCHE  |  A: DETAILS  |  X: KONTO",
+                1, UI_MUTED);
     }
-    print_footer();
+    draw_status_bar();
+    ui_end();
 }
 
 static void draw_lesson(void) {
-    clear_screen();
-    char date[40], key[64];
+    ui_begin();
+    draw_sidebar("STUNDENPLAN");
+    char date[40], subtitle[150];
     format_date(date_for_day(g_day), date, sizeof(date));
-    date_key_for_lesson(g_day, g_period, key, sizeof(key));
-    char section[180];
-    snprintf(section, sizeof(section), "%s | %s Stunde | %s",
-        subject_for(g_day, g_period), PERIOD_LABELS[g_period], date);
-    print_header(section);
-    printf("Zeit: %s   Daten-Schluessel: %s\n\n", PERIOD_TIMES[g_period], key);
-    printf("\x1b[1;36mHAUSAUFGABEN\x1b[0m\n");
-    int shown = 0;
+    snprintf(subtitle, sizeof(subtitle), "%s  |  %s STUNDE  |  %s",
+             DAY_NAMES[g_day], PERIOD_LABELS[g_period], date);
+    draw_top_header(subject_for(g_day, g_period), subtitle);
+
+    ui_card(252, 154, 625, 468, false);
+    ui_text(278, 178, "HAUSAUFGABEN", 2, UI_CYAN);
+    ui_badge(742, 172, 106, "A  NEU", UI_SURFACE_2, UI_CYAN);
+    int hw_row = 0;
     for (int i = 0; i < g_entry_count; i++) {
         if (g_entries[i].classwork) continue;
-        printf("  - %s", g_entries[i].title);
-        if (g_entries[i].author[0]) printf("  (%s)", g_entries[i].author);
-        if (g_entries[i].legacy) printf("  [alt]");
-        printf("\n");
-        shown++;
+        int y = 222 + hw_row * 67;
+        bool selected = g_menu_selection == i;
+        ui_card(270, y, 590, 57, selected, false);
+        ui_text(286, y + 12, g_entries[i].title, 1, selected ? UI_CYAN : UI_TEXT);
+        if (g_entries[i].author[0]) ui_text(286, y + 34, g_entries[i].author, 1, UI_MUTED);
+        if (g_entries[i].legacy) ui_badge(738, y + 15, 100, "ALT", UI_SURFACE_2, UI_YELLOW);
+        hw_row++;
+        if (hw_row >= 5) break;
     }
-    if (!shown) printf("  Keine Eintraege gefunden.\n");
+    if (!hw_row) ui_text(286, 236, "NOCH KEINE HAUSAUFGABEN", 1, UI_MUTED);
 
-    printf("\n\x1b[1;33mKLASSENARBEITEN\x1b[0m\n");
-    shown = 0;
+    ui_card(895, 154, 353, 468, false);
+    ui_text(921, 178, "KLASSENARBEITEN", 1, UI_YELLOW);
+    ui_badge(1178, 172, 54, "X +", UI_SURFACE_2, UI_YELLOW);
+    int ka_row = 0;
     for (int i = 0; i < g_entry_count; i++) {
         if (!g_entries[i].classwork) continue;
-        printf("  - %s\n", g_entries[i].title);
-        shown++;
+        int y = 222 + ka_row * 63;
+        ui_card(914, y, 315, 54, false);
+        ui_text(930, y + 20, g_entries[i].title, 1, UI_TEXT);
+        ka_row++;
+        if (ka_row >= 5) break;
     }
-    if (!shown) printf("  Keine Klassenarbeiten eingetragen.\n");
+    if (!ka_row) ui_text(920, 236, "KEINE KLASSENARBEIT", 1, UI_MUTED);
 
-    printf("\n\x1b[90mHinweis: Dieser native Erstport zeigt vorhandene Eintraege an.\n");
-    printf("Erstellen, Melden und Bild-Uploads werden in einem weiteren Ausbauschritt\n");
-    printf("nativ umgesetzt; dafuer wird kein WebKit benoetigt.\x1b[0m\n");
-    print_footer();
+    ui_text(252, 629, "A HAUSAUFGABE  |  X KLASSENARBEIT  |  R MELDEN  |  Y AKTUALISIEREN",
+            1, UI_MUTED);
+    draw_status_bar();
+    ui_end();
 }
 
 static void draw_account(void) {
-    clear_screen();
-    print_header("TOBISERVICES-KONTO");
+    ui_begin();
+    draw_sidebar("KONTO");
+    draw_top_header("TOBISERVICES-KONTO", "ANMELDUNG UND PROFIL");
+    ui_card(252, 154, 470, 420, false);
     if (g_account.signedIn) {
-        printf("\x1b[1;32mAngemeldet\x1b[0m\n");
-        printf("E-Mail: %s\nUID: %s\n", g_account.email, g_account.uid);
-        printf("Tags: %s\nGoldmuenzen: %d\n",
-            g_account.tags[0] ? g_account.tags : "(keine)", g_account.goldCoins);
-        printf("Dienste: %s\nAdmin: %s\n\n",
-            g_account.disabled ? "GESPERRT" : "Aktiv",
-            g_account.isAdmin ? "Ja" : "Nein");
+        ui_badge(278, 180, 150, "ANGEMELDET", UI_GREEN, UI_BG);
+        ui_text(278, 232, g_account.displayName[0] ? g_account.displayName : "TOBISERVICES",
+                2, UI_TEXT);
+        ui_text(278, 270, g_account.email, 1, UI_MUTED);
+        ui_separator(278, 302, 410, UI_BORDER);
+        ui_text(278, 330, "GOLDMUENZEN", 1, UI_MUTED);
+        char coins[32];
+        snprintf(coins, sizeof(coins), "%d", g_account.goldCoins);
+        ui_text(278, 358, coins, 3, UI_YELLOW);
+        ui_text(278, 426, "TAGS", 1, UI_MUTED);
+        ui_text(278, 452, g_account.tags[0] ? g_account.tags : "KEINE", 1, UI_TEXT);
+        ui_text(278, 500, g_account.isAdmin ? "ADMIN-ZUGRIFF AKTIV" : "STANDARDKONTO",
+                1, g_account.isAdmin ? UI_GREEN : UI_MUTED);
     } else {
-        printf("Nicht angemeldet. Oeffentliche Stundenplan-Daten bleiben verfuegbar.\n\n");
+        ui_badge(278, 180, 118, "GASTMODUS", UI_SURFACE_2, UI_CYAN);
+        ui_text(278, 238, "NICHT ANGEMELDET", 2, UI_TEXT);
+        ui_text(278, 280, "Oeffentliche Stundenplan-Daten", 1, UI_MUTED);
+        ui_text(278, 306, "bleiben ohne Konto verfuegbar.", 1, UI_MUTED);
     }
-    const char *items_guest[] = { "Mit TobiServices anmelden", "Zurueck" };
-    const char *items_user[] = { "Admin Center oeffnen", "Abmelden", "Zurueck" };
-    if (g_account.signedIn) {
-        for (int i = 0; i < 3; i++)
-            printf("%s %s\n", g_menu_selection == i ? ">" : " ", items_user[i]);
-    } else {
-        for (int i = 0; i < 2; i++)
-            printf("%s %s\n", g_menu_selection == i ? ">" : " ", items_guest[i]);
+
+    ui_card(750, 154, 498, 420, true);
+    ui_text(780, 182, "KONTO-AKTIONEN", 1, UI_MUTED);
+    const char *items_guest[] = { "MIT TOBISERVICES ANMELDEN", "ZURUECK ZUM STUNDENPLAN" };
+    const char *items_user[] = { "ADMIN CENTER", "ABMELDEN", "ZURUECK ZUM STUNDENPLAN" };
+    int count = g_account.signedIn ? 3 : 2;
+    for (int i = 0; i < count; i++) {
+        int y = 230 + i * 76;
+        bool selected = g_menu_selection == i;
+        ui_card(774, y, 450, 58, selected);
+        ui_text(796, y + 22, g_account.signedIn ? items_user[i] : items_guest[i],
+                1, selected ? UI_CYAN : UI_TEXT);
     }
-    print_footer();
+    ui_text(252, 629, "STEUERKREUZ: AUSWAHL  |  A: BESTAETIGEN  |  B: ZURUECK",
+            1, UI_MUTED);
+    draw_status_bar();
+    ui_end();
 }
 
 static void draw_admin(void) {
-    clear_screen();
-    print_header("TOBISERVICES ADMIN CENTER");
-    printf("\x1b[1;32mAdmin-Berechtigung serverseitig bestaetigt\x1b[0m\n");
-    printf("Konto: %s\n", g_account.email);
-    printf("Wartungsmodus: %s\n", g_maintenance ? "AKTIV" : "Aus");
-    if (g_maintenance_message[0]) printf("Meldung: %s\n", g_maintenance_message);
-    printf("\n");
+    ui_begin();
+    draw_sidebar("ADMIN");
+    draw_top_header("TOBISERVICES ADMIN", "NATIVE ADMINISTRATION");
+    ui_card(252, 154, 996, 118, false);
+    ui_badge(278, 178, 184, "ADMIN BESTAETIGT", UI_GREEN, UI_BG);
+    ui_text(278, 222, g_account.email, 1, UI_TEXT);
+    ui_badge(1058, 178, 160, g_maintenance ? "WARTUNG AN" : "WARTUNG AUS",
+             g_maintenance ? UI_RED : UI_SURFACE_2, g_maintenance ? UI_BG : UI_GREEN);
+
     const char *items[] = {
-        "Switch-NRO neu kompilieren",
-        "Wartungsmodus umschalten",
-        "Accountliste anzeigen",
-        "Zurueck zum Konto"
+        "SWITCH NRO NEU KOMPILIEREN",
+        "WARTUNGSMODUS UMSCHALTEN",
+        "ACCOUNTLISTE ANZEIGEN",
+        "ZURUECK ZUM KONTO"
     };
-    for (int i = 0; i < 4; i++)
-        printf("%s %s\n", g_menu_selection == i ? ">" : " ", items[i]);
-    printf("\n");
-    printf("\x1b[90mDie Admin-Cloud-Funktionen pruefen deine Admin-Rolle bei jedem Aufruf erneut.\x1b[0m\n");
-    print_footer();
+    const char *descriptions[] = {
+        "Startet GitHub Actions und aktualisiert den Download.",
+        "Schaltet den Wartungshinweis fuer Untis Next.",
+        "Zeigt Konten und deren Berechtigungsstatus.",
+        "Zurueck zu deinen Kontoinformationen."
+    };
+    for (int i = 0; i < 4; i++) {
+        int y = 300 + i * 78;
+        bool selected = g_menu_selection == i;
+        ui_card(252, y, 996, 64, selected);
+        ui_text(278, y + 12, items[i], 1, selected ? UI_CYAN : UI_TEXT);
+        ui_text(278, y + 36, descriptions[i], 1, UI_MUTED);
+        ui_text(1194, y + 22, ">", 2, selected ? UI_CYAN : UI_MUTED);
+    }
+    ui_text(252, 629, "NUR AKTIVE ADMINS  |  JEDE AENDERUNG WIRD SERVERSEITIG GEPRUEFT",
+            1, UI_MUTED);
+    draw_status_bar();
+    ui_end();
 }
 
 static bool keyboard_input(const char *header, const char *guide, bool password,
