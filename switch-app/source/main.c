@@ -752,7 +752,7 @@ static void draw_lesson(void) {
         if (g_entries[i].classwork) continue;
         int y = 222 + hw_row * 67;
         bool selected = g_menu_selection == i;
-        ui_card(270, y, 590, 57, selected, false);
+        ui_card(270, y, 590, 57, selected);
         ui_text(286, y + 12, g_entries[i].title, 1, selected ? UI_CYAN : UI_TEXT);
         if (g_entries[i].author[0]) ui_text(286, y + 34, g_entries[i].author, 1, UI_MUTED);
         if (g_entries[i].legacy) ui_badge(738, y + 15, 100, "ALT", UI_SURFACE_2, UI_YELLOW);
@@ -928,28 +928,38 @@ static void show_admin_users(void) {
         http_response_free(&r);
         return;
     }
-    clear_screen();
-    print_header("ACCOUNT-MONITOR");
+
     JsonToken *t = (JsonToken *)calloc(MAX_JSON_TOKENS, sizeof(JsonToken));
     int n = 0, root = json_parse(r.data, t, &n);
     int data = root >= 0 ? json_object_get(r.data, t, n, root, "result") : -1;
     if (data < 0 && root >= 0) data = json_object_get(r.data, t, n, root, "data");
     int users = data >= 0 ? json_object_get(r.data, t, n, data, "users") : -1;
+
+    ui_begin();
+    draw_sidebar("ADMIN");
+    draw_top_header("ACCOUNT-MONITOR", "TOBISERVICES-KONTEN");
     int shown = 0;
     for (int i = 0; i < 24; i++) {
         int item = json_array_get(t, n, users, i);
         if (item < 0) break;
-        char name[100] = "", email[140] = "", tags[140] = "";
+        char name[100] = "", email[140] = "", uid[140] = "";
         json_get_string(r.data, t, n, item, "displayName", name, sizeof(name));
         json_get_string(r.data, t, n, item, "email", email, sizeof(email));
-        json_get_string(r.data, t, n, item, "uid", tags, sizeof(tags));
-        printf("%2d. %s\n    %s\n    UID: %.60s\n\n",
-            i + 1, name[0] ? name : "(ohne Namen)", email, tags);
+        json_get_string(r.data, t, n, item, "uid", uid, sizeof(uid));
+        int column = i / 12;
+        int row = i % 12;
+        int x = 252 + column * 500;
+        int y = 145 + row * 39;
+        ui_card(x, y, 478, 33, false);
+        ui_text(x + 12, y + 7, name[0] ? name : "(OHNE NAMEN)", 1, UI_TEXT);
+        ui_text(x + 250, y + 7, email[0] ? email : uid, 1, UI_MUTED);
         shown++;
     }
-    if (!shown) printf("Keine Accounts oder Antwortformat nicht erkannt.\n");
-    printf("\nB = Zurueck\n");
-    consoleUpdate(NULL);
+    if (!shown) ui_text(278, 170, "KEINE ACCOUNTS ODER ANTWORT NICHT ERKANNT", 1, UI_MUTED);
+    ui_text(252, 629, "B ZURUECK  |  + BEENDEN", 1, UI_CYAN);
+    draw_status_bar();
+    ui_end();
+
     PadState waitpad;
     padInitializeDefault(&waitpad);
     while (appletMainLoop()) {
@@ -957,13 +967,13 @@ static void show_admin_users(void) {
         u64 pressed = padGetButtonsDown(&waitpad);
         if (pressed & HidNpadButton_B) break;
         if (pressed & HidNpadButton_Plus) break;
-        consoleUpdate(NULL);
+        svcSleepThread(16000000ULL);
     }
+
     free(t);
     http_response_free(&r);
     snprintf(g_status, sizeof(g_status), "%d Account-Eintraege angezeigt.", shown);
 }
-
 /* ------------------------------- Actions ------------------------------ */
 static void shift_week(int direction) {
     g_week_monday.tm_mday += direction * 7;
@@ -975,7 +985,7 @@ static void do_login(void) {
     if (!keyboard_input("TobiServices-Anmeldung", "E-Mail-Adresse", false, email, sizeof(email))) return;
     if (!keyboard_input("TobiServices-Anmeldung", "Passwort", true, password, sizeof(password))) return;
     snprintf(g_status, sizeof(g_status), "Melde bei Firebase an ...");
-    consoleUpdate(NULL);
+    draw_loading("Melde dich bei TobiServices an ...");
     if (!firebase_sign_in(email, password)) {
         memset(password, 0, sizeof(password));
         return;
@@ -1008,13 +1018,15 @@ int main(int argc, char *argv[]) {
     padInitializeDefault(&pad);
 
     initialize_week();
+    if (!ui_init()) {
+        snprintf(g_status, sizeof(g_status), "SDL2-Oberflaeche konnte nicht gestartet werden.");
+    }
     Result socket_rc = socketInitializeDefault();
     g_socket_initialized = R_SUCCEEDED(socket_rc);
     if (!g_socket_initialized) {
         snprintf(g_status, sizeof(g_status), "Switch-Netzwerkdienst nicht verfuegbar (0x%08X).", (unsigned)socket_rc);
     }
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    consoleUpdate(NULL);
 
     /* switch-curl uses libnx's native TLS service and system trust store. */
     if (g_socket_initialized) {
@@ -1043,7 +1055,7 @@ int main(int argc, char *argv[]) {
             if (down & HidNpadButton_A) {
                 if (subject_for(g_day, g_period)[0]) {
                     snprintf(g_status, sizeof(g_status), "Lade Hausaufgaben und Klassenarbeiten ...");
-                    clear_screen(); print_header("LADEN"); printf("%s\n", g_status); consoleUpdate(NULL);
+                    draw_loading("Lade Hausaufgaben und Klassenarbeiten ...");
                     load_lesson_entries();
                     g_screen = SCREEN_LESSON;
                 } else {
@@ -1105,6 +1117,7 @@ int main(int argc, char *argv[]) {
     }
 
     curl_global_cleanup();
+    ui_shutdown();
     if (g_socket_initialized) socketExit();
     consoleExit(NULL);
     return 0;
