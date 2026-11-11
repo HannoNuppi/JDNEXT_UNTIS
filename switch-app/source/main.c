@@ -53,6 +53,14 @@ typedef struct {
 } Account;
 
 typedef struct {
+    const char *id;
+    const char *name;
+    int price;
+    bool event_only;
+    bool local_only;
+} ThemeOption;
+
+typedef struct {
     char id[128];
     char title[280];
     char author[96];
@@ -117,6 +125,39 @@ static const char *SCHEDULE_B[5][6] = {
     {"Religion/PPL", "Sport", "Mathe", "Englisch", "", ""},
     {"Mathe", "Deutsch", "Latein", "Biologie", "", ""},
     {"Wahlpflicht", "Englisch", "Chemie", "Politik", "", ""}
+};
+
+static const ThemeOption THEME_OPTIONS[] = {
+    {"Next","Next",0,false,false},
+    {"Ocean","Ocean Pulse",10,false,false},
+    {"Sunset","Sunset Rush",10,false,false},
+    {"Forest","Forest Beat",10,false,false},
+    {"Candy","Candy Pop",10,false,false},
+    {"Midnight","Midnight Club",10,false,false},
+    {"Aurora","Aurora Glow",10,false,false},
+    {"Retro","Retro Arcade",10,false,false},
+    {"RoyalRebels","Royal Rebels",50,false,false},
+    {"Bronze","Bronze",50,false,false},
+    {"Silver","Silber",70,false,false},
+    {"Gold","Gold",100,false,false},
+    {"WinterEvent","Winterwunder",0,true,false},
+    {"BirthdayEvent","Birthday Bash",0,true,false},
+    {"HalloweenEvent","Halloween Afterdark",0,true,false},
+    {"WinterGoldEvent","Winter Gold",0,true,false},
+    {"AdminMatrix","Admin Matrix",0,true,true}
+};
+static const char *PROFILE_TITLE_IDS[] = {
+    "", "Newcomer", "Dance Fan", "Gold Collector", "Theme Hunter", "Night Owl", "Legend"
+};
+static const char *PROFILE_TITLE_LABELS[] = {
+    "KEIN TITEL", "NEWCOMER", "DANCE FAN", "GOLD COLLECTOR", "THEME HUNTER", "NIGHT OWL", "LEGEND"
+};
+static const char *PROFILE_ICON_IDS[] = {
+    "", "🎮", "🦊", "🐱", "🐸", "🐼", "🐉", "🦄", "👾", "🎃", "⭐", "💎", "🌈", "🪩"
+};
+static const char *PROFILE_ICON_LABELS[] = {
+    "KEIN ICON", "GAMEPAD", "FUCHS", "KATZE", "FROSCH", "PANDA", "DRACHE",
+    "EINHORN", "ALIEN", "KUERBIS", "STERN", "DIAMANT", "REGENBOGEN", "DISCO"
 };
 
 /* --------------------------- Small JSON parser ------------------------- */
@@ -339,6 +380,42 @@ static bool account_owns_theme(const char *theme_id) {
     char needle[96];
     snprintf(needle, sizeof(needle), "|%s|", theme_id);
     return strstr(g_account.ownedThemes, needle) != NULL;
+}
+
+static bool theme_is_visible(const ThemeOption *theme) {
+    if (!theme) return false;
+    if (theme->local_only) return g_account.isAdmin;
+    if (theme->event_only) return account_owns_theme(theme->id);
+    return true;
+}
+
+static int visible_theme_count(void) {
+    int count = 0;
+    for (size_t i = 0; i < sizeof(THEME_OPTIONS) / sizeof(THEME_OPTIONS[0]); i++) {
+        if (theme_is_visible(&THEME_OPTIONS[i])) count++;
+    }
+    return count;
+}
+
+static const ThemeOption *visible_theme_at(int wanted) {
+    int index = 0;
+    for (size_t i = 0; i < sizeof(THEME_OPTIONS) / sizeof(THEME_OPTIONS[0]); i++) {
+        if (!theme_is_visible(&THEME_OPTIONS[i])) continue;
+        if (index++ == wanted) return &THEME_OPTIONS[i];
+    }
+    return NULL;
+}
+
+static int profile_title_index(void) {
+    for (int i = 0; i < 7; i++)
+        if (strcmp(g_account.profileTitle, PROFILE_TITLE_IDS[i]) == 0) return i;
+    return 0;
+}
+
+static int profile_icon_index(void) {
+    for (int i = 0; i < 14; i++)
+        if (strcmp(g_account.profileIcon, PROFILE_ICON_IDS[i]) == 0) return i;
+    return 0;
 }
 
 /* ------------------------------- HTTPS --------------------------------- */
