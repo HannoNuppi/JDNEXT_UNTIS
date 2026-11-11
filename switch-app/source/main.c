@@ -1053,6 +1053,223 @@ static void load_lesson_entries(void) {
     http_response_free(&r);
 }
 
+
+static bool build_owned_themes_json(const char *extra_theme, char *out, size_t cap) {
+    if (!cap) return false;
+    size_t used = (size_t)snprintf(out, cap, "{\"arrayValue\":{\"values\":[");
+    if (used >= cap) return false;
+
+    char copy[sizeof(g_account.ownedThemes)];
+    snprintf(copy, sizeof(copy), "%s", g_account.ownedThemes);
+    char *save = NULL;
+    char *theme = strtok_r(copy, "|", &save);
+    int count = 0;
+    while (theme) {
+        if (theme[0]) {
+            int written = snprintf(out + used, cap - used,
+                "%s{\"stringValue\":\"%s\"}", count ? "," : "", theme);
+            if (written < 0 || (size_t)written >= cap - used) return false;
+            used += (size_t)written;
+            count++;
+        }
+        theme = strtok_r(NULL, "|", &save);
+    }
+
+    if (extra_theme && extra_theme[0] && !account_owns_theme(extra_theme)) {
+        int written = snprintf(out + used, cap - used,
+            "%s{\"stringValue\":\"%s\"}", count ? "," : "", extra_theme);
+        if (written < 0 || (size_t)written >= cap - used) return false;
+        used += (size_t)written;
+        count++;
+    }
+
+    int written = snprintf(out + used, cap - used, "]}}");
+    return written >= 0 && (size_t)written < cap - used && count <= 30;
+}
+
+static bool equip_theme_native(const ThemeOption *theme) {
+    if (!theme) return false;
+    if (theme->local_only) {
+        if (!g_account.signedIn || !g_account.isAdmin || g_account.disabled) {
+            snprintf(g_status, sizeof(g_status), "Admin Matrix ist nur mit aktivem Admin-Tag verfuegbar.");
+            return false;
+        }
+        ui_set_theme(theme->id);
+        snprintf(g_account.equippedTheme, sizeof(g_account.equippedTheme), "%s", theme->id);
+        snprintf(g_status, sizeof(g_status), "%s lokal ausgeruestet.", theme->name);
+        return true;
+    }
+
+    if (!g_account.signedIn) {
+        if (strcmp(theme->id, "Next") == 0) {
+            ui_set_theme("Next");
+            snprintf(g_status, sizeof(g_status), "Next ist das kostenlose Gast-Theme.");
+            return true;
+        }
+        snprintf(g_status, sizeof(g_status), "Melde dich an, um dieses Theme auszuruesten.");
+        return false;
+    }
+    if (g_account.disabled) {
+        snprintf(g_status, sizeof(g_status), "Dieses Konto ist gesperrt.");
+        return false;
+    }
+    if (strcmp(theme->id, "Next") != 0 && !account_owns_theme(theme->id)) {
+        snprintf(g_status, sizeof(g_status), "Dieses Theme ist noch nicht freigeschaltet.");
+        return false;
+    }
+
+    char body[1200];
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+            "\"fields\":{\"equippedTheme\":{\"stringValue\":\"%s\"}}"
+          "},"
+          "\"updateMask\":{\"fieldPaths\":[\"equippedTheme\"]},"
+          "\"currentDocument\":{\"exists\":true}"
+        "}]}",
+        TOBI_PROJECT, g_account.uid, theme->id);
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Theme-Aenderung konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Theme konnte nicht ausgeruestet werden (HTTP %ld).", response.status);
+    } else {
+        refresh_profile();
+        ui_set_theme(theme->id);
+        snprintf(g_status, sizeof(g_status), "%s ausgeruestet.", theme->name);
+    }
+    http_response_free(&response);
+    return ok;
+}
+
+static bool purchase_theme_native(const ThemeOption *theme) {
+    if (!theme || theme->price <= 0 || theme->event_only || theme->local_only) {
+        snprintf(g_status, sizeof(g_status), "Dieses Theme ist nicht kaufbar.");
+        return false;
+    }
+    if (!g_account.signedIn || g_account.disabled) {
+        snprintf(g_status, sizeof(g_status), "Zum Kaufen brauchst du ein aktives TobiServices-Konto.");
+        return false;
+    }
+
+    refresh_profile();
+    if (account_owns_theme(theme->id)) {
+        return equip_theme_native(theme);
+    }
+    if (g_account.goldCoins < theme->price) {
+        snprintf(g_status, sizeof(g_status), "Du brauchst %d Goldmuenzen fuer %s.",
+            theme->price, theme->name);
+        return false;
+    }
+
+    char owned_json[3000], event_id[256], body[6500];
+    if (!build_owned_themes_json(theme->id, owned_json, sizeof(owned_json))) {
+        snprintf(g_status, sizeof(g_status), "Deine Theme-Liste ist voll oder ungueltig.");
+        return false;
+    }
+    snprintf(event_id, sizeof(event_id), "theme-%s-%s", g_account.uid, theme->id);
+
+    int next_coins = g_account.goldCoins - theme->price;
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":["
+          "{\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+            "\"fields\":{"
+              "\"goldCoins\":{\"integerValue\":\"%d\"},"
+              "\"ownedThemes\":%s,"
+              "\"lastJdnextCoinEventId\":{\"stringValue\":\"%s\"}"
+            "}"
+          "},"
+          "\"updateMask\":{\"fieldPaths\":[\"goldCoins\",\"ownedThemes\",\"lastJdnextCoinEventId\"]},"
+          "\"updateTransforms\":[{\"fieldPath\":\"lastProfileChangeAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}],"
+          "\"currentDocument\":{\"exists\":true}"
+          "},"
+          "{\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/jdnextCoinEvents/%s\","
+            "\"fields\":{"
+              "\"uid\":{\"stringValue\":\"%s\"},"
+              "\"amount\":{\"integerValue\":\"-%d\"},"
+              "\"type\":{\"stringValue\":\"theme-purchase\"},"
+              "\"themeId\":{\"stringValue\":\"%s\"}"
+            "}"
+          "},"
+          "\"updateTransforms\":[{\"fieldPath\":\"createdAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}],"
+          "\"currentDocument\":{\"exists\":false}"
+        "}"
+        "]}",
+        TOBI_PROJECT, g_account.uid, next_coins, owned_json, event_id,
+        TOBI_PROJECT, event_id, g_account.uid, theme->price, theme->id);
+
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Theme-Kauf konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Theme-Kauf abgelehnt (HTTP %ld).", response.status);
+    } else {
+        refresh_profile();
+        snprintf(g_status, sizeof(g_status), "%s gekauft. Neues Guthaben: %d.",
+            theme->name, g_account.goldCoins);
+    }
+    http_response_free(&response);
+    return ok;
+}
+
+static bool save_profile_cosmetics_native(void) {
+    if (!g_account.signedIn || g_account.disabled) {
+        snprintf(g_status, sizeof(g_status), "Zum Bearbeiten brauchst du ein aktives Konto.");
+        return false;
+    }
+    const char *title = PROFILE_TITLE_IDS[g_profile_title_selection];
+    const char *icon = PROFILE_ICON_IDS[g_profile_icon_selection];
+    char safe_title[100], safe_icon[100], body[1800];
+    json_escape(title, safe_title, sizeof(safe_title));
+    json_escape(icon, safe_icon, sizeof(safe_icon));
+
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/users/%s\","
+            "\"fields\":{"
+              "\"profileTitle\":{\"stringValue\":\"%s\"},"
+              "\"profileIcon\":{\"stringValue\":\"%s\"}"
+            "}"
+          "},"
+          "\"updateMask\":{\"fieldPaths\":[\"profileTitle\",\"profileIcon\"]},"
+          "\"updateTransforms\":[{\"fieldPath\":\"lastProfileChangeAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}],"
+          "\"currentDocument\":{\"exists\":true}"
+        "}]}",
+        TOBI_PROJECT, g_account.uid, safe_title, safe_icon);
+
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Profil-Aenderung konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status), "Profil konnte nicht gespeichert werden (HTTP %ld).", response.status);
+    } else {
+        snprintf(g_status, sizeof(g_status), "Profil-Design gespeichert.");
+        refresh_profile();
+    }
+    http_response_free(&response);
+    return ok;
+}
+
+
 /* ------------------------------ Native UI ------------------------------ */
 static void draw_sidebar(const char *active) {
     ui_rect(0, 0, 220, 720, UI_SURFACE);
