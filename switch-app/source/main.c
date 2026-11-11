@@ -1570,7 +1570,7 @@ static void draw_admin(void) {
     ui_begin();
     draw_sidebar("ADMIN");
     draw_top_header("TOBISERVICES ADMIN", "NATIVE ADMINISTRATION");
-    ui_card(252, 154, 996, 118, false);
+    ui_card(252, 154, 996, 112, false);
     ui_badge(278, 178, 184, "ADMIN BESTAETIGT", UI_GREEN, UI_BG);
     ui_text(278, 222, g_account.email, 1, UI_TEXT);
     ui_badge(1058, 178, 160, g_maintenance ? "WARTUNG AN" : "WARTUNG AUS",
@@ -1579,22 +1579,24 @@ static void draw_admin(void) {
     const char *items[] = {
         "SWITCH NRO NEU KOMPILIEREN",
         "WARTUNGSMODUS UMSCHALTEN",
-        "ACCOUNTLISTE ANZEIGEN",
+        "ACCOUNTLISTE UND VERWALTUNG",
+        "UNTIS NEXT LIVE FREIGEBEN",
         "ZURUECK ZUM KONTO"
     };
     const char *descriptions[] = {
-        "Startet GitHub Actions und aktualisiert den Download.",
+        "Baut die native Switch-App neu und aktualisiert den Download.",
         "Schaltet den Wartungshinweis fuer Untis Next.",
-        "Zeigt Konten und deren Berechtigungsstatus.",
+        "Accounts, Tags, Sperren, Muenzen und Event-Themes verwalten.",
+        "Gibt die aktuelle Test-Version fuer die Live-Website frei.",
         "Zurueck zu deinen Kontoinformationen."
     };
-    for (int i = 0; i < 4; i++) {
-        int y = 300 + i * 78;
+    for (int i = 0; i < 5; i++) {
+        int y = 282 + i * 68;
         bool selected = g_menu_selection == i;
-        ui_card(252, y, 996, 64, selected);
-        ui_text(278, y + 12, items[i], 1, selected ? UI_CYAN : UI_TEXT);
-        ui_text(278, y + 36, descriptions[i], 1, UI_MUTED);
-        ui_text(1194, y + 22, ">", 2, selected ? UI_CYAN : UI_MUTED);
+        ui_card(252, y, 996, 58, selected);
+        ui_text(278, y + 10, items[i], 1, selected ? UI_CYAN : UI_TEXT);
+        ui_text(278, y + 34, descriptions[i], 1, UI_MUTED);
+        ui_text(1194, y + 19, ">", 2, selected ? UI_CYAN : UI_MUTED);
     }
     ui_text(252, 629, "NUR AKTIVE ADMINS  |  JEDE AENDERUNG WIRD SERVERSEITIG GEPRUEFT",
             1, UI_MUTED);
@@ -1632,6 +1634,56 @@ static void request_nro_build(void) {
     }
     snprintf(g_status, sizeof(g_status), "NRO-Build gestartet. Den Status findest du im GitHub-Workflow.");
     http_response_free(&r);
+}
+
+
+static bool request_live_publish_native(void) {
+    char note[301] = "";
+    if (!keyboard_input("Untis Next live veroeffentlichen",
+        "Optionale Notiz fuer den Release (max. 300 Zeichen)",
+        false, note, sizeof(note))) {
+        snprintf(g_status, sizeof(g_status), "Live-Freigabe abgebrochen.");
+        return false;
+    }
+
+    char safe_note[620], request_id[180], body[1600];
+    json_escape(note, safe_note, sizeof(safe_note));
+    snprintf(request_id, sizeof(request_id), "switch-%lu-%s-%lu",
+        (unsigned long)time(NULL), g_account.uid, ++g_write_counter);
+
+    int needed = snprintf(body, sizeof(body),
+        "{\"writes\":[{"
+          "\"update\":{"
+            "\"name\":\"projects/%s/databases/(default)/documents/siteSettings/deployment\","
+            "\"fields\":{"
+              "\"requestId\":{\"stringValue\":\"%s\"},"
+              "\"target\":{\"stringValue\":\"untis-next\"},"
+              "\"requestedBy\":{\"stringValue\":\"%s\"},"
+              "\"note\":{\"stringValue\":\"%s\"}"
+            "}"
+          "},"
+          "\"updateMask\":{\"fieldPaths\":[\"requestId\",\"target\",\"requestedBy\",\"note\",\"requestedAt\"]},"
+          "\"updateTransforms\":[{\"fieldPath\":\"requestedAt\","
+            "\"setToServerValue\":\"REQUEST_TIME\"}]"
+        "}]}",
+        TOBI_PROJECT, request_id, g_account.uid, safe_note);
+
+    if (needed < 0 || (size_t)needed >= sizeof(body)) {
+        snprintf(g_status, sizeof(g_status), "Live-Freigabe konnte nicht vorbereitet werden.");
+        return false;
+    }
+
+    HttpResponse response;
+    bool ok = firestore_commit(TOBI_PROJECT, body, g_account.idToken, &response);
+    if (!ok) {
+        snprintf(g_status, sizeof(g_status),
+            "Live-Freigabe abgelehnt (HTTP %ld).", response.status);
+    } else {
+        snprintf(g_status, sizeof(g_status),
+            "Live-Freigabe gespeichert. Der Pages-Workflow verarbeitet sie.");
+    }
+    http_response_free(&response);
+    return ok;
 }
 
 static void toggle_maintenance(void) {
@@ -2410,8 +2462,8 @@ int main(int argc, char *argv[]) {
             }
             draw_profile();
         } else if (g_screen == SCREEN_ADMIN) {
-            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 3) % 4;
-            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 4;
+            if (down & HidNpadButton_Up) g_menu_selection = (g_menu_selection + 4) % 5;
+            if (down & HidNpadButton_Down) g_menu_selection = (g_menu_selection + 1) % 5;
             if (down & HidNpadButton_B) g_screen = SCREEN_ACCOUNT;
             if (down & HidNpadButton_A) {
                 if (!g_account.isAdmin || g_account.disabled) {
@@ -2420,6 +2472,7 @@ int main(int argc, char *argv[]) {
                 } else if (g_menu_selection == 0) request_nro_build();
                 else if (g_menu_selection == 1) toggle_maintenance();
                 else if (g_menu_selection == 2) show_admin_users();
+                else if (g_menu_selection == 3) request_live_publish_native();
                 else g_screen = SCREEN_ACCOUNT;
             }
             draw_admin();
