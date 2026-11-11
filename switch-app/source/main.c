@@ -1452,8 +1452,8 @@ static void draw_account(void) {
         char coins[32];
         snprintf(coins, sizeof(coins), "%d", g_account.goldCoins);
         ui_text(278, 358, coins, 3, UI_YELLOW);
-        ui_text(278, 426, "TAGS", 1, UI_MUTED);
-        ui_text(278, 452, g_account.tags[0] ? g_account.tags : "KEINE", 1, UI_TEXT);
+        ui_text(278, 426, "AUSGERUESTET", 1, UI_MUTED);
+        ui_text(278, 452, g_account.equippedTheme[0] ? g_account.equippedTheme : "Next", 1, UI_CYAN);
         ui_text(278, 500, g_account.isAdmin ? "ADMIN-ZUGRIFF AKTIV" : "STANDARDKONTO",
                 1, g_account.isAdmin ? UI_GREEN : UI_MUTED);
     } else {
@@ -1461,22 +1461,94 @@ static void draw_account(void) {
         ui_text(278, 238, "NICHT ANGEMELDET", 2, UI_TEXT);
         ui_text(278, 280, "Oeffentliche Stundenplan-Daten", 1, UI_MUTED);
         ui_text(278, 306, "bleiben ohne Konto verfuegbar.", 1, UI_MUTED);
+        ui_text(278, 370, "Themes kannst du ansehen.", 1, UI_MUTED);
+        ui_text(278, 396, "Kaeufe und Profil bleiben gesperrt.", 1, UI_MUTED);
     }
 
     ui_card(750, 154, 498, 420, true);
     ui_text(780, 182, "KONTO-AKTIONEN", 1, UI_MUTED);
-    const char *items_guest[] = { "MIT TOBISERVICES ANMELDEN", "ZURUECK ZUM STUNDENPLAN" };
-    const char *items_user[] = { "ADMIN CENTER", "ABMELDEN", "ZURUECK ZUM STUNDENPLAN" };
-    int count = g_account.signedIn ? 3 : 2;
+    const char *guest_items[] = {
+        "THEMES ANSEHEN",
+        "MIT TOBISERVICES ANMELDEN",
+        "ZURUECK ZUM STUNDENPLAN"
+    };
+    const char *user_items[] = {
+        "THEMES UND PROFIL",
+        "ABMELDEN",
+        "ZURUECK ZUM STUNDENPLAN"
+    };
+    const char *admin_items[] = {
+        "THEMES UND PROFIL",
+        "ADMIN CENTER",
+        "ABMELDEN",
+        "ZURUECK ZUM STUNDENPLAN"
+    };
+    int count = !g_account.signedIn ? 3 : (g_account.isAdmin ? 4 : 3);
     for (int i = 0; i < count; i++) {
-        int y = 230 + i * 76;
+        int y = 222 + i * 72;
         bool selected = g_menu_selection == i;
-        ui_card(774, y, 450, 58, selected);
-        ui_text(796, y + 22, g_account.signedIn ? items_user[i] : items_guest[i],
-                1, selected ? UI_CYAN : UI_TEXT);
+        ui_card(774, y, 450, 56, selected);
+        const char *label = !g_account.signedIn ? guest_items[i]
+            : (g_account.isAdmin ? admin_items[i] : user_items[i]);
+        ui_text(796, y + 21, label, 1, selected ? UI_CYAN : UI_TEXT);
     }
     ui_text(252, 629, "STEUERKREUZ: AUSWAHL  |  A: BESTAETIGEN  |  B: ZURUECK",
             1, UI_MUTED);
+    draw_status_bar();
+    ui_end();
+}
+
+static void draw_themes(void) {
+    ui_begin();
+    draw_sidebar("KONTO");
+    char coin_text[80];
+    snprintf(coin_text, sizeof(coin_text), "%d GOLDMUENZEN", g_account.signedIn ? g_account.goldCoins : 0);
+    draw_top_header("THEMES", coin_text);
+    int count = visible_theme_count();
+    for (int i = 0; i < count; i++) {
+        const ThemeOption *theme = visible_theme_at(i);
+        if (!theme) continue;
+        int column = i / 7;
+        int row = i % 7;
+        int x = 252 + column * 500;
+        int y = 145 + row * 68;
+        bool selected = g_menu_selection == i;
+        bool owned = strcmp(theme->id, "Next") == 0 || account_owns_theme(theme->id)
+            || (theme->local_only && g_account.isAdmin);
+        bool equipped = strcmp(g_account.equippedTheme[0] ? g_account.equippedTheme : "Next",
+                               theme->id) == 0;
+        ui_card(x, y, 478, 58, selected);
+        ui_text(x + 15, y + 10, theme->name, 1, selected ? UI_CYAN : UI_TEXT);
+        ui_text(x + 15, y + 34, theme->id, 1, UI_MUTED);
+        if (equipped) ui_badge(x + 344, y + 16, 120, "AUSGERUESTET", UI_GREEN, UI_BG);
+        else if (owned) ui_badge(x + 344, y + 16, 120, "BESITZT", UI_SURFACE_2, UI_CYAN);
+        else if (theme->price > 0) {
+            char price[32];
+            snprintf(price, sizeof(price), "%d GOLD", theme->price);
+            ui_badge(x + 344, y + 16, 120, price, UI_SURFACE_2, UI_YELLOW);
+        } else ui_badge(x + 344, y + 16, 120, "FREIGESCHALTET", UI_SURFACE_2, UI_GREEN);
+    }
+    ui_text(252, 629, "A KAUFEN/AUSRUESTEN  |  X PROFIL-DESIGN  |  B ZURUECK",
+            1, UI_MUTED);
+    draw_status_bar();
+    ui_end();
+}
+
+static void draw_profile(void) {
+    ui_begin();
+    draw_sidebar("KONTO");
+    draw_top_header("PROFIL-DESIGN", "TITEL UND PROFIL-ICON");
+    ui_card(252, 160, 996, 190, true);
+    ui_text(280, 188, "PROFIL-TITEL", 1, UI_MUTED);
+    ui_text(280, 230, PROFILE_TITLE_LABELS[g_profile_title_selection], 3, UI_CYAN);
+    ui_text(280, 292, "STEUERKREUZ HOCH/RUNTER ZUM AUSWAEHLEN", 1, UI_MUTED);
+
+    ui_card(252, 372, 996, 190, true);
+    ui_text(280, 400, "PROFIL-ICON", 1, UI_MUTED);
+    ui_text(280, 442, PROFILE_ICON_LABELS[g_profile_icon_selection], 3, UI_PURPLE);
+    ui_text(280, 506, "STEUERKREUZ LINKS/RECHTS ZUM AUSWAEHLEN", 1, UI_MUTED);
+
+    ui_text(252, 629, "A SPEICHERN  |  B ZURUECK", 1, UI_MUTED);
     draw_status_bar();
     ui_end();
 }
